@@ -2,6 +2,8 @@ import Phaser from 'phaser';
 import { RAPIER, createRapierPhysics } from './physics';
 import type { RapierPhysics, RapierBody } from './physics';
 
+type BoundedGameObject = Phaser.GameObjects.GameObject & { getBounds: () => Phaser.Geom.Rectangle };
+
 // Phaser does not await an async Scene.create(), so Rapier must be initialized
 // before the game boots (otherwise update() runs with uninitialized state).
 await RAPIER.init();
@@ -23,6 +25,7 @@ class MainScene extends Phaser.Scene {
     // Game Objects
     private ball!: Phaser.GameObjects.Container;
     private ballBody!: RapierBody;
+    private platforms: Phaser.GameObjects.Rectangle[] = [];
     private dominoes: Phaser.GameObjects.Rectangle[] = [];
     private floorBody!: RapierBody;
 
@@ -33,6 +36,7 @@ class MainScene extends Phaser.Scene {
     private aimAngle: number = -45;
     private aimPower: number = 800;
     private hasLaunched = false;
+    private cameraSmoothing = 0.06; // Smoothing per 60fps frame (Phaser style)
 
     // UI
     private aimGraphics!: Phaser.GameObjects.Graphics;
@@ -62,7 +66,12 @@ class MainScene extends Phaser.Scene {
 
     create() {
         // 1. Init Physics
-        this.rapier = createRapierPhysics(new RAPIER.Vector2(0, GRAVITY_Y), this);
+        const gravity = { x: 0, y: GRAVITY_Y };
+        this.rapier = createRapierPhysics(gravity, this);
+        const world = this.rapier.getWorld();
+        world.integrationParameters.numSolverIterations = 50;
+        world.integrationParameters.normalizedAllowedLinearError = 0.001;
+        world.integrationParameters.lengthUnit = 1000;
         // this.rapier.debugger(true); // Uncomment to see physics lines
 
         // 2. Create World
@@ -177,6 +186,7 @@ class MainScene extends Phaser.Scene {
             rigidBodyType: RAPIER.RigidBodyType.Fixed,
             collider: RAPIER.ColliderDesc.cuboid(platW / 2, platH / 2)
         });
+        this.platforms.push(platform);
 
         // 2. The Domino (Target)
         const domW = 20;
@@ -310,61 +320,68 @@ class MainScene extends Phaser.Scene {
     }
 
     private updateCamera(delta: number) {
+        const target = this.getCameraTarget(250, 0.15, 1.0);
+        if (!target) return;
+
         const camera = this.cameras.main;
+        const smoothing = 1 - Math.pow(1 - this.cameraSmoothing, delta / 16.6667);
 
-        // Find Bounds
-        let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-        let hasPoints = false;
+        const newZoom = Phaser.Math.Linear(camera.zoom, target.zoom, smoothing);
+        const newX = Phaser.Math.Linear(camera.midPoint.x, target.x, smoothing);
+        const newY = this.getPinnedCenterY(newZoom);
 
-        // 1. Always track player
-        if (this.ball.active) {
-            minX = Math.min(minX, this.ball.x);
-            maxX = Math.max(maxX, this.ball.x);
-            minY = Math.min(minY, this.ball.y);
-            maxY = Math.max(maxY, this.ball.y);
-            hasPoints = true;
+        camera.setZoom(newZoom);
+        camera.centerOn(newX, newY);
+    }
+
+    private getCameraTarget(padding = 250, minZoom = 0.15, maxZoom = 1.0) {
+        const camera = this.cameras.main;
+        const tracked: BoundedGameObject[] = [];
+        if (this.ball.active) tracked.push(this.ball as BoundedGameObject);
+        tracked.push(...this.platforms.filter(p => p.active).map(p => p as BoundedGameObject));
+        tracked.push(...this.dominoes.filter(d => d.active).map(d => d as BoundedGameObject));
+
+        if (!tracked.length) return;
+
+        let minX = Infinity;
+        let minY = Infinity;
+        let maxX = -Infinity;
+        let maxY = -Infinity;
+
+        for (const obj of tracked) {
+            if (!obj.active) continue;
+            const bounds = obj.getBounds();
+            minX = Math.min(minX, bounds.x);
+            minY = Math.min(minY, bounds.y);
+            maxX = Math.max(maxX, bounds.right);
+            maxY = Math.max(maxY, bounds.bottom);
         }
 
-        // 2. Track Dominos that are moving (optional, or just track all)
-        this.dominoes.forEach(d => {
-            // Only track if active
-            if (d.active) {
-                minX = Math.min(minX, d.x);
-                maxX = Math.max(maxX, d.x);
-                minY = Math.min(minY, d.y);
-                maxY = Math.max(maxY, d.y);
-            }
-        });
+        if (!isFinite(minX) || !isFinite(minY) || !isFinite(maxX) || !isFinite(maxY)) return;
 
-        if (!hasPoints) return;
+        const width = Math.max(1, maxX - minX);
+        const paddedWidth = width + padding * 2;
 
-        // Add padding
-        const pad = 250;
-        const width = Math.max(800, (maxX - minX) + pad * 2);
-        const height = Math.max(600, (maxY - minY) + pad * 2);
+        // Pin the bottom of the view to the floor with a little breathing room.
+        const top = minY - padding;
+        const bottom = FLOOR_Y + CAMERA_FLOOR_PADDING;
+        const requiredHeight = Math.max(1, bottom - top);
 
-        // Calculate Zoom to fit
-        const zoomX = camera.width / width;
-        const zoomY = camera.height / height;
-        let targetZoom = Math.min(zoomX, zoomY);
+        const zoom = Phaser.Math.Clamp(
+            Math.min(camera.width / paddedWidth, camera.height / requiredHeight),
+            minZoom,
+            maxZoom
+        );
 
-        // Clamp Zoom
-        targetZoom = Phaser.Math.Clamp(targetZoom, 0.15, 1.0);
+        const centerX = (minX + maxX) / 2;
+        const centerY = this.getPinnedCenterY(zoom);
 
-        // Smooth Zoom
-        const smoothFactor = 1.0 - Math.pow(0.01, delta / 1000); // Frame-rate independent smoothing
-        camera.zoom = Phaser.Math.Linear(camera.zoom, targetZoom, smoothFactor);
+        return { x: centerX, y: centerY, zoom };
+    }
 
-        // Calculate Target Center X
-        const targetX = (minX + maxX) / 2;
-
-        // Scroll values are world top-left; account for zoom.
-        // Keep the floor slightly visible at the bottom: bottomWorld = FLOOR_Y + padding
-        const targetScrollX = targetX - camera.width / (2 * camera.zoom);
-        const targetScrollY = (FLOOR_Y + CAMERA_FLOOR_PADDING) - camera.height / camera.zoom;
-
-        camera.scrollX = Phaser.Math.Linear(camera.scrollX, targetScrollX, smoothFactor);
-        camera.scrollY = Phaser.Math.Linear(camera.scrollY, targetScrollY, smoothFactor);
+    private getPinnedCenterY(zoom: number) {
+        const halfViewHeight = this.cameras.main.height / (2 * zoom);
+        return (FLOOR_Y + CAMERA_FLOOR_PADDING) - halfViewHeight;
     }
 }
 
