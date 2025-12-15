@@ -1,0 +1,23 @@
+{
+  "name": "beavers_towers_maths",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "typescript": "~5.9.3",
+    "vite": "npm:rolldown-vite@7.2.5"
+  },
+  "overrides": {
+    "vite": "npm:rolldown-vite@7.2.5"
+  },
+  "dependencies": {
+    "@dimforge/rapier2d-compat": "^0.19.3",
+    "@phaserjs/rapier-connector": "^1.0.2",
+    "phaser": "^3.90.0"
+  }
+}
