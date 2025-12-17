@@ -1,6 +1,22 @@
 import Phaser from 'phaser';
 import { RAPIER, createRapierPhysics } from './physics';
 import type { RapierPhysics, RapierBody } from './physics';
+import {
+    AIM_ANGLE_MAX_DEG,
+    AIM_ANGLE_MIN_DEG,
+    AIM_POWER_MAX,
+    AIM_POWER_MIN,
+    CATAPULT_HEIGHT_ABOVE_FLOOR,
+    DOMINO_HEIGHT,
+    DOMINO_WIDTH,
+    LEVEL_PLATFORM_COUNT,
+    LEVEL_PLATFORM_GAP_FRACTION,
+    PERFECT_SHOT_ANGLE_DEG,
+    PERFECT_SHOT_POWER,
+    PLATFORM_HEIGHT,
+    PLATFORM_PARABOLA_Y_OFFSET,
+    PLATFORM_WIDTH
+} from './config';
 
 type BoundedGameObject = Phaser.GameObjects.GameObject & { getBounds: () => Phaser.Geom.Rectangle };
 
@@ -14,10 +30,6 @@ const FLOOR_Y = 800;
 const CAMERA_FLOOR_PADDING = 60; // Show a small slice of the ground
 const UNIVERSE_WIDTH = 200_000;
 const BALL_RADIUS = 20;
-
-// "Perfect Shot" definition (used to generate the level)
-const IDEAL_ANGLE = -55; // Degrees (Negative is up)
-const IDEAL_SPEED = 1100;
 
 class MainScene extends Phaser.Scene {
     private rapier!: RapierPhysics;
@@ -33,8 +45,8 @@ class MainScene extends Phaser.Scene {
     private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
     private enterKey!: Phaser.Input.Keyboard.Key;
     private resetKey!: Phaser.Input.Keyboard.Key;
-    private aimAngle: number = -45;
-    private aimPower: number = 800;
+    private aimAngle: number = PERFECT_SHOT_ANGLE_DEG;
+    private aimPower: number = PERFECT_SHOT_POWER;
     private hasLaunched = false;
     private cameraSmoothing = 0.06; // Smoothing per 60fps frame (Phaser style)
 
@@ -45,8 +57,8 @@ class MainScene extends Phaser.Scene {
     init() {
         // Reset core state on every restart (Scene is reused)
         this.hasLaunched = false;
-        this.aimAngle = -45;
-        this.aimPower = 800;
+        this.aimAngle = PERFECT_SHOT_ANGLE_DEG;
+        this.aimPower = PERFECT_SHOT_POWER;
     }
 
     constructor() {
@@ -118,7 +130,7 @@ class MainScene extends Phaser.Scene {
 
     private createPlayerBall() {
         const startX = -600;
-        const startY = FLOOR_Y - 50;
+        const startY = FLOOR_Y - CATAPULT_HEIGHT_ABOVE_FLOOR;
 
         // "Beaver" Visual (Container so we can add simple face details)
         const container = this.add.container(startX, startY);
@@ -140,47 +152,63 @@ class MainScene extends Phaser.Scene {
         // Float mode until launch
         this.ballBody.rigidBody.setGravityScale(0, true);
         this.ballBody.collider.setRestitution(0.4);
-        this.ballBody.collider.setDensity(2.0);
+        this.ballBody.collider.setFriction(1.5);
+        this.ballBody.collider.setDensity(500.0);
     }
 
     /**
      * The Maths part!
-     * We calculate the trajectory of a projectile launched at IDEAL_ANGLE and IDEAL_SPEED.
+     * We calculate the trajectory of a projectile launched at PERFECT_SHOT_ANGLE_DEG and PERFECT_SHOT_POWER.
      * We place platforms along this path.
      */
     private generateParabolaLevel() {
         const startX = this.ball.x;
         const startY = this.ball.y;
 
-        const rads = Phaser.Math.DegToRad(IDEAL_ANGLE);
-        const vx = IDEAL_SPEED * Math.cos(rads);
-        const vy = IDEAL_SPEED * Math.sin(rads);
+        const rads = Phaser.Math.DegToRad(PERFECT_SHOT_ANGLE_DEG);
+        const vx = PERFECT_SHOT_POWER * Math.cos(rads);
+        const vy = PERFECT_SHOT_POWER * Math.sin(rads);
 
-        // We sample time 't' (seconds) into the future
-        // We start at 0.3s so we don't spawn blocks on top of the player
-        // We stop when the y hits the floor
+        // Place platforms along the "ideal" trajectory, leaving an initial gap fraction.
+        // Gap fraction is based on the full trajectory until returning to the launch height (symmetric about the apex).
+        const tReturnToStartY = (-2 * vy) / GRAVITY_Y;
+        if (!isFinite(tReturnToStartY) || tReturnToStartY <= 0) return;
 
-        const timeStep = 0.45; // Place a platform every 0.45 seconds of flight
-        let t = 0.4;
+        // End placement when the *platform top* reaches the origin height:
+        // platformTop = parabolaY + PLATFORM_PARABOLA_Y_OFFSET === startY
+        // => parabolaY === startY - PLATFORM_PARABOLA_Y_OFFSET
+        const a = 0.5 * GRAVITY_Y;
+        const b = vy;
+        const c = PLATFORM_PARABOLA_Y_OFFSET;
+        const disc = b * b - 4 * a * c;
+        if (disc <= 0) return;
+        const tEnd = (-b + Math.sqrt(disc)) / (2 * a);
+        if (!isFinite(tEnd) || tEnd <= 0) return;
 
-        while (true) {
+        const gap = Phaser.Math.Clamp(LEVEL_PLATFORM_GAP_FRACTION, 0, 0.99);
+        const tStart = gap * tReturnToStartY;
+        const tStartClamped = Math.min(tStart, tEnd);
+
+        for (let i = 0; i < LEVEL_PLATFORM_COUNT; i++) {
+            const alphaWithin = LEVEL_PLATFORM_COUNT === 1 ? 0.5 : i / (LEVEL_PLATFORM_COUNT - 1);
+            const t = Phaser.Math.Linear(tStartClamped, tEnd, alphaWithin);
+
             // Kinematic Equation: p = p0 + v*t + 0.5*a*t^2
             const x = startX + vx * t;
             const y = startY + vy * t + 0.5 * GRAVITY_Y * t * t;
-
-            if (y > FLOOR_Y - 40) break; // Hit the floor
-
             this.createPlatformWithDomino(x, y);
-            t += timeStep;
         }
     }
 
     private createPlatformWithDomino(x: number, y: number) {
-        // Align platform left edge to the parabola point so a "perfect" shot meets the domino first.
+        // Platform placement:
+        // - left edge aligns to parabola x
+        // - top surface sits PLATFORM_PARABOLA_Y_OFFSET below parabola y
         const platformLeft = x;
-        const platW = 100;
-        const platH = 20;
-        const platform = this.add.rectangle(platformLeft + platW / 2, y + 40, platW, platH, 0x555555); // Dark Grey
+        const platW = PLATFORM_WIDTH;
+        const platH = PLATFORM_HEIGHT;
+        const platformTop = y + PLATFORM_PARABOLA_Y_OFFSET;
+        const platform = this.add.rectangle(platformLeft + platW / 2, platformTop + platH / 2, platW, platH, 0x555555); // Dark Grey
 
         this.rapier.addRigidBody(platform, {
             rigidBodyType: RAPIER.RigidBodyType.Fixed,
@@ -189,10 +217,15 @@ class MainScene extends Phaser.Scene {
         this.platforms.push(platform);
 
         // 2. The Domino (Target)
-        const domW = 20;
-        const domH = 60;
-        // Place slightly above platform
-        const domino = this.add.rectangle(platformLeft + domW / 2, y - 10, domW, domH, 0xFFD700); // Gold
+        const domW = DOMINO_WIDTH;
+        const domH = DOMINO_HEIGHT;
+        const domino = this.add.rectangle(
+            platformLeft + platW / 2,
+            platformTop - domH / 2,
+            domW,
+            domH,
+            0xFFD700
+        ); // Gold
 
         const domBody = this.rapier.addRigidBody(domino, {
             rigidBodyType: RAPIER.RigidBodyType.Dynamic,
@@ -210,6 +243,23 @@ class MainScene extends Phaser.Scene {
         this.handleInput();
         this.updateCamera(delta);
         this.drawAimArrow();
+        this.applyRollingResistance();
+    }
+
+    private applyRollingResistance() {
+        if (!this.ballBody) return;
+
+        const centerY = this.ballBody.rigidBody.translation().y;
+        const distToFloor = FLOOR_Y - centerY;
+        const isOnGround = distToFloor <= BALL_RADIUS + 5;
+
+        if (isOnGround) {
+            this.ballBody.rigidBody.setLinearDamping(1.5);
+            this.ballBody.rigidBody.setAngularDamping(1.5);
+        } else {
+            this.ballBody.rigidBody.setLinearDamping(0);
+            this.ballBody.rigidBody.setAngularDamping(0);
+        }
     }
 
     private handleInput() {
@@ -221,31 +271,28 @@ class MainScene extends Phaser.Scene {
             return;
         }
 
-        let changed = false;
+        const prevAngle = this.aimAngle;
+        const prevPower = this.aimPower;
 
         // Angle (Left/Right)
         if (this.cursors.left.isDown) {
             this.aimAngle -= 1;
-            changed = true;
         } else if (this.cursors.right.isDown) {
             this.aimAngle += 1;
-            changed = true;
         }
 
         // Power (Up/Down)
         if (this.cursors.up.isDown) {
             this.aimPower += 10;
-            changed = true;
         } else if (this.cursors.down.isDown) {
             this.aimPower -= 10;
-            changed = true;
         }
 
         // Clamp
-        this.aimAngle = Phaser.Math.Clamp(this.aimAngle, -90, 0);
-        this.aimPower = Phaser.Math.Clamp(this.aimPower, 100, 2000);
+        this.aimAngle = Phaser.Math.Clamp(this.aimAngle, AIM_ANGLE_MIN_DEG, AIM_ANGLE_MAX_DEG);
+        this.aimPower = Phaser.Math.Clamp(this.aimPower, AIM_POWER_MIN, AIM_POWER_MAX);
 
-        if (changed) this.updateUI();
+        if (this.aimAngle !== prevAngle || this.aimPower !== prevPower) this.updateUI();
 
         // Launch: Space or Enter (click/tap handled by pointer event)
         if (Phaser.Input.Keyboard.JustDown(this.cursors.space) || Phaser.Input.Keyboard.JustDown(this.enterKey)) {
@@ -284,8 +331,9 @@ class MainScene extends Phaser.Scene {
         const startY = this.ball.y;
         const rads = Phaser.Math.DegToRad(this.aimAngle);
 
-        // Map power (100-2000) to pixel length (50-300)
-        const arrowLength = Phaser.Math.Linear(50, 400, (this.aimPower - 100) / 1900);
+        // Map power to pixel length.
+        const powerT = Phaser.Math.Clamp((this.aimPower - AIM_POWER_MIN) / (AIM_POWER_MAX - AIM_POWER_MIN), 0, 1);
+        const arrowLength = Phaser.Math.Linear(50, 400, powerT);
 
         const endX = startX + arrowLength * Math.cos(rads);
         const endY = startY + arrowLength * Math.sin(rads);
@@ -308,15 +356,22 @@ class MainScene extends Phaser.Scene {
         this.aimGraphics.lineTo(endX + headLen * Math.cos(angle2), endY + headLen * Math.sin(angle2));
         this.aimGraphics.strokePath();
 
-        // Ghost Trajectory (dots)
-        this.aimGraphics.fillStyle(0xffffff, 0.3);
+        // Ghost Trajectory (line)
+        this.aimGraphics.lineStyle(4, 0xffa500, 0.6); // Orange
         const vx = this.aimPower * Math.cos(rads);
         const vy = this.aimPower * Math.sin(rads);
-        for (let t = 0.1; t < 1.0; t += 0.1) {
+        // Extend until the projectile returns to the launch height (symmetric about the apex).
+        const tReturnToStartY = (-2 * vy) / GRAVITY_Y;
+        const tEnd = Math.max(0, tReturnToStartY);
+        const step = 0.02;
+        this.aimGraphics.beginPath();
+        for (let t = 0; t <= tEnd; t += step) {
             const tx = startX + vx * t;
             const ty = startY + vy * t + 0.5 * GRAVITY_Y * t * t;
-            this.aimGraphics.fillCircle(tx, ty, 3);
+            if (t === 0) this.aimGraphics.moveTo(tx, ty);
+            else this.aimGraphics.lineTo(tx, ty);
         }
+        this.aimGraphics.strokePath();
     }
 
     private updateCamera(delta: number) {
