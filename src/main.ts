@@ -1,14 +1,14 @@
 import Phaser from 'phaser';
 import { RAPIER, createRapierPhysics } from './physics';
 import type { RapierPhysics, RapierBody } from './physics';
+import { TOWER_LIBRARY } from './towers';
+import type { Trackable, TowerInstance, TowerSpawnContext } from './towers';
 import {
     AIM_ANGLE_MAX_DEG,
     AIM_ANGLE_MIN_DEG,
     AIM_POWER_MAX,
     AIM_POWER_MIN,
     CATAPULT_HEIGHT_ABOVE_FLOOR,
-    DOMINO_HEIGHT,
-    DOMINO_WIDTH,
     LEVEL_PLATFORM_COUNT,
     LEVEL_PLATFORM_GAP_FRACTION,
     PERFECT_SHOT_ANGLE_DEG,
@@ -17,8 +17,6 @@ import {
     PLATFORM_PARABOLA_Y_OFFSET,
     PLATFORM_WIDTH
 } from './config';
-
-type BoundedGameObject = Phaser.GameObjects.GameObject & { getBounds: () => Phaser.Geom.Rectangle };
 
 // Phaser does not await an async Scene.create(), so Rapier must be initialized
 // before the game boots (otherwise update() runs with uninitialized state).
@@ -38,8 +36,14 @@ class MainScene extends Phaser.Scene {
     private ball!: Phaser.GameObjects.Container;
     private ballBody!: RapierBody;
     private platforms: Phaser.GameObjects.Rectangle[] = [];
-    private dominoes: Phaser.GameObjects.Rectangle[] = [];
+    private towers: TowerInstance[] = [];
     private floorBody!: RapierBody;
+
+    private trackedObjects: { obj: Trackable; includeInBounds: boolean }[] = [];
+
+    private trackObject = (obj: Trackable, includeInBounds = true) => {
+        this.trackedObjects.push({ obj, includeInBounds });
+    };
 
     // Controls & State
     private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
@@ -59,6 +63,10 @@ class MainScene extends Phaser.Scene {
         this.hasLaunched = false;
         this.aimAngle = PERFECT_SHOT_ANGLE_DEG;
         this.aimPower = PERFECT_SHOT_POWER;
+
+        this.platforms.length = 0;
+        this.towers.length = 0;
+        this.trackedObjects.length = 0;
     }
 
     constructor() {
@@ -143,6 +151,7 @@ class MainScene extends Phaser.Scene {
         container.add([bodyShape, tooth, eye, pupil]);
 
         this.ball = container;
+        this.trackObject(this.ball as unknown as Trackable, true);
 
         this.ballBody = this.rapier.addRigidBody(container, {
             rigidBodyType: RAPIER.RigidBodyType.Dynamic,
@@ -196,11 +205,11 @@ class MainScene extends Phaser.Scene {
             // Kinematic Equation: p = p0 + v*t + 0.5*a*t^2
             const x = startX + vx * t;
             const y = startY + vy * t + 0.5 * GRAVITY_Y * t * t;
-            this.createPlatformWithDomino(x, y);
+            this.createPlatformWithTower(x, y);
         }
     }
 
-    private createPlatformWithDomino(x: number, y: number) {
+    private createPlatformWithTower(x: number, y: number) {
         // Platform placement:
         // - left edge aligns to parabola x
         // - top surface sits PLATFORM_PARABOLA_Y_OFFSET below parabola y
@@ -215,26 +224,22 @@ class MainScene extends Phaser.Scene {
             collider: RAPIER.ColliderDesc.cuboid(platW / 2, platH / 2)
         });
         this.platforms.push(platform);
+        this.trackObject(platform as unknown as Trackable, true);
 
-        // 2. The Domino (Target)
-        const domW = DOMINO_WIDTH;
-        const domH = DOMINO_HEIGHT;
-        const domino = this.add.rectangle(
-            platformLeft + platW / 2,
-            platformTop - domH / 2,
-            domW,
-            domH,
-            0xFFD700
-        ); // Gold
+        const towerX = platformLeft + platW / 2;
+        const surfaceY = platformTop;
 
-        const domBody = this.rapier.addRigidBody(domino, {
-            rigidBodyType: RAPIER.RigidBodyType.Dynamic,
-            collider: RAPIER.ColliderDesc.cuboid(domW / 2, domH / 2)
-        });
-        domBody.collider.setFriction(0.5);
-        domBody.collider.setRestitution(0.1);
+        const ctx: TowerSpawnContext = {
+            scene: this,
+            rapier: this.rapier,
+            x: towerX,
+            surfaceY,
+            trackObject: this.trackObject
+        };
 
-        this.dominoes.push(domino);
+        const def = Phaser.Utils.Array.GetRandom(TOWER_LIBRARY);
+        const instance = def.spawn(ctx);
+        this.towers.push(instance);
     }
 
     // --- GAME LOOP ---
@@ -303,6 +308,11 @@ class MainScene extends Phaser.Scene {
     private launch() {
         if (this.hasLaunched) return;
         this.hasLaunched = true;
+
+        for (const tower of this.towers) {
+            tower.enableDynamics?.();
+        }
+
         this.ballBody.rigidBody.setGravityScale(1, true);
 
         const rads = Phaser.Math.DegToRad(this.aimAngle);
@@ -391,10 +401,13 @@ class MainScene extends Phaser.Scene {
 
     private getCameraTarget(padding = 250, minZoom = 0.15, maxZoom = 1.0) {
         const camera = this.cameras.main;
-        const tracked: BoundedGameObject[] = [];
-        if (this.ball.active) tracked.push(this.ball as BoundedGameObject);
-        tracked.push(...this.platforms.filter(p => p.active).map(p => p as BoundedGameObject));
-        tracked.push(...this.dominoes.filter(d => d.active).map(d => d as BoundedGameObject));
+        const tracked: Trackable[] = [];
+
+        for (const t of this.trackedObjects) {
+            if (!t.includeInBounds) continue;
+            if (!t.obj.active) continue;
+            tracked.push(t.obj);
+        }
 
         if (!tracked.length) return;
 
@@ -404,7 +417,6 @@ class MainScene extends Phaser.Scene {
         let maxY = -Infinity;
 
         for (const obj of tracked) {
-            if (!obj.active) continue;
             const bounds = obj.getBounds();
             minX = Math.min(minX, bounds.x);
             minY = Math.min(minY, bounds.y);
