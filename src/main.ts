@@ -9,6 +9,8 @@ import {
     AIM_POWER_MAX,
     AIM_POWER_MIN,
     CATAPULT_HEIGHT_ABOVE_FLOOR,
+    DEBUG_BOUNDS,
+    DEBUG_RAPIER,
     LEVEL_PLATFORM_COUNT,
     LEVEL_PLATFORM_GAP_FRACTION,
     PERFECT_SHOT_ANGLE_DEG,
@@ -57,6 +59,7 @@ class MainScene extends Phaser.Scene {
     // UI
     private aimGraphics!: Phaser.GameObjects.Graphics;
     private statsText!: Phaser.GameObjects.Text;
+    private debugGraphics?: Phaser.GameObjects.Graphics;
 
     init() {
         // Reset core state on every restart (Scene is reused)
@@ -82,6 +85,10 @@ class MainScene extends Phaser.Scene {
         g.fillRect(0, 0, 64, 10);
         g.generateTexture('ground_tile', 64, 64);
         g.destroy();
+
+        // Sprites
+        this.load.image('log1', new URL('./assets/images/log2.png', import.meta.url).toString());
+        this.load.image('beaver', new URL('./assets/images/beaver.png', import.meta.url).toString());
     }
 
     create() {
@@ -92,7 +99,7 @@ class MainScene extends Phaser.Scene {
         world.integrationParameters.numSolverIterations = 50;
         world.integrationParameters.normalizedAllowedLinearError = 0.001;
         world.integrationParameters.lengthUnit = 1000;
-        // this.rapier.debugger(true); // Uncomment to see physics lines
+        if (DEBUG_RAPIER) this.rapier.debugger(true);
 
         // 2. Create World
         this.createInfiniteFloor();
@@ -118,6 +125,10 @@ class MainScene extends Phaser.Scene {
             padding: { x: 10, y: 10 }
         }).setScrollFactor(0).setDepth(1000);
 
+        if (DEBUG_BOUNDS) {
+            this.debugGraphics = this.add.graphics().setDepth(2000);
+        }
+
         this.updateUI();
     }
 
@@ -140,15 +151,15 @@ class MainScene extends Phaser.Scene {
         const startX = -600;
         const startY = FLOOR_Y - CATAPULT_HEIGHT_ABOVE_FLOOR;
 
-        // "Beaver" Visual (Container so we can add simple face details)
+        // "Beaver" Visual (Container so we can add a ring)
         const container = this.add.container(startX, startY);
         container.setSize(BALL_RADIUS * 2, BALL_RADIUS * 2);
 
-        const bodyShape = this.add.circle(0, 0, BALL_RADIUS, 0x8B4513); // SaddleBrown
-        const eye = this.add.circle(7, -5, 5, 0xffffff);
-        const pupil = this.add.circle(8, -5, 2, 0x000000);
-        const tooth = this.add.rectangle(10, 8, 6, 8, 0xffffff);
-        container.add([bodyShape, tooth, eye, pupil]);
+        const ring = this.add.circle(0, 0, BALL_RADIUS + 4, 0x000000, 0).setStrokeStyle(4, 0xffffff, 1);
+        const beaver = this.add.image(0, 0, 'beaver');
+        const scale = Math.min((BALL_RADIUS * 2) / beaver.width, (BALL_RADIUS * 2) / beaver.height);
+        beaver.setScale(scale);
+        container.add([ring, beaver]);
 
         this.ball = container;
         this.trackObject(this.ball as unknown as Trackable, true);
@@ -249,6 +260,20 @@ class MainScene extends Phaser.Scene {
         this.updateCamera(delta);
         this.drawAimArrow();
         this.applyRollingResistance();
+        this.drawDebugBounds();
+    }
+
+    private drawDebugBounds() {
+        if (!this.debugGraphics) return;
+
+        this.debugGraphics.clear();
+        this.debugGraphics.lineStyle(2, 0xff00ff, 0.9);
+
+        for (const t of this.trackedObjects) {
+            if (!t.obj.active) continue;
+            const b = t.obj.getBounds();
+            this.debugGraphics.strokeRect(b.x, b.y, b.width, b.height);
+        }
     }
 
     private applyRollingResistance() {
@@ -453,7 +478,7 @@ class MainScene extends Phaser.Scene {
 }
 
 const config: Phaser.Types.Core.GameConfig = {
-    type: Phaser.AUTO,
+    type: Phaser.WEBGL, // NineSlice is WebGL-only
     width: window.innerWidth,
     height: window.innerHeight,
     parent: 'app',
