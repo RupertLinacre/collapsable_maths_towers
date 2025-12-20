@@ -25,7 +25,6 @@ export const PLATFORM_PARABOLA_Y_OFFSET = PLATFORM_WIDTH / 2;
 
 // --- Maths Challenge ---
 export const MATH_YEAR_LEVEL = 'year2';
-export const STARTING_LIVES = 3;
 export const QUESTION_TEXT_OFFSET_Y = 140;
 export const ANSWER_TEXT_OFFSET_Y = 40;
 

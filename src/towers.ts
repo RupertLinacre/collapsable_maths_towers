@@ -22,6 +22,7 @@ export interface TowerInstance {
     bodies: RapierBody[];
 
     enableDynamics?: () => void; // e.g. Fixed → Dynamic on launch
+    setFrozenVisual?: (frozen: boolean) => void;
     step?: () => void; // e.g. grow one step
     getTopSpawn?: () => { x: number; y: number } | null;
     destroy?: () => void;
@@ -38,6 +39,13 @@ const EPS = 2;
 const PLANK_FRICTION = 0.7;
 const PLANK_RESTITUTION = 0.05;
 const PLANK_DENSITY = 1.0;
+const PLANK_TEXTURE_NORMAL = 'log1';
+const PLANK_TEXTURE_FROZEN = 'log_frozen';
+
+type PlankVisuals = {
+    normal: Phaser.GameObjects.GameObject;
+    frozen: Phaser.GameObjects.GameObject;
+};
 
 function clampThreeSliceMargins(targetW: number, left: number, right: number) {
     const maxX = Math.max(1, Math.floor(targetW / 2) - 1);
@@ -55,10 +63,12 @@ function createPlank(
     ctx: TowerSpawnContext,
     objects: Trackable[],
     bodies: RapierBody[],
+    visuals: PlankVisuals[],
     x: number,
     y: number,
     w: number,
     h: number,
+    isFrozen = true,
     bodyType = RAPIER.RigidBodyType.Fixed
 ) {
     // Keep physics unrotated; rotate only the child sprite for visuals.
@@ -71,24 +81,37 @@ function createPlank(
     const renderW = isTall ? h : w;
     const renderH = isTall ? w : h;
 
-    // Stretch length using 3-slice (left/middle/right), but stretch thickness by scaling the whole sprite.
-    // This keeps the "ends" crisp lengthways while allowing the log to get fatter/thinner naturally.
-    const source = ctx.scene.textures.get('log1').getSourceImage() as unknown as { width: number; height: number };
-    const baseH = Math.max(1, source?.height ?? renderH);
-    const thicknessScale = renderH / baseH;
-
     // These are in texture pixels and then clamped so short planks don't break the 3-slice.
     const slice = clampThreeSliceMargins(renderW, 5, 10);
 
-    const sprite = ctx.scene.add
-        // 3-slice: omit top/bottom margins so only length is sliced.
-        .nineslice(0, 0, 'log1', undefined, renderW, baseH, slice.left, slice.right)
-        .setOrigin(0.5, 0.5);
+    const buildSprite = (textureKey: string) => {
+        // Stretch length using 3-slice (left/middle/right), but stretch thickness by scaling the whole sprite.
+        // This keeps the "ends" crisp lengthways while allowing the log to get fatter/thinner naturally.
+        const source = ctx.scene.textures.get(textureKey).getSourceImage() as unknown as {
+            width: number;
+            height: number;
+        };
+        const baseH = Math.max(1, source?.height ?? renderH);
+        const thicknessScale = renderH / baseH;
 
-    sprite.setScale(1, thicknessScale);
-    if (isTall) sprite.setRotation(Math.PI / 2);
+        const sprite = ctx.scene.add
+            // 3-slice: omit top/bottom margins so only length is sliced.
+            .nineslice(0, 0, textureKey, undefined, renderW, baseH, slice.left, slice.right)
+            .setOrigin(0.5, 0.5);
 
-    container.add(sprite);
+        sprite.setScale(1, thicknessScale);
+        if (isTall) sprite.setRotation(Math.PI / 2);
+
+        return sprite as Phaser.GameObjects.GameObject;
+    };
+
+    const normalSprite = buildSprite(PLANK_TEXTURE_NORMAL);
+    const frozenSprite = buildSprite(PLANK_TEXTURE_FROZEN);
+    normalSprite.setVisible(!isFrozen);
+    frozenSprite.setVisible(isFrozen);
+
+    container.add([normalSprite, frozenSprite]);
+    visuals.push({ normal: normalSprite, frozen: frozenSprite });
 
     const body = ctx.rapier.addRigidBody(container, {
         rigidBodyType: bodyType,
@@ -113,13 +136,24 @@ const single: TowerDefinition = {
     spawn: (ctx) => {
         const objects: Trackable[] = [];
         const bodies: RapierBody[] = [];
+        const visuals: PlankVisuals[] = [];
 
         const w = PLANK_WIDTH;
         const h = PLANK_LENGTH;
 
-        createPlank(ctx, objects, bodies, ctx.x, ctx.surfaceY - h / 2, w, h);
+        createPlank(ctx, objects, bodies, visuals, ctx.x, ctx.surfaceY - h / 2, w, h);
 
-        return { objects, bodies, enableDynamics: () => enableBodiesDynamic(bodies) };
+        return {
+            objects,
+            bodies,
+            enableDynamics: () => enableBodiesDynamic(bodies),
+            setFrozenVisual: (frozen) => {
+                for (const visual of visuals) {
+                    visual.frozen.setVisible(frozen);
+                    visual.normal.setVisible(!frozen);
+                }
+            }
+        };
     }
 };
 
@@ -128,14 +162,25 @@ const stack2: TowerDefinition = {
     spawn: (ctx) => {
         const objects: Trackable[] = [];
         const bodies: RapierBody[] = [];
+        const visuals: PlankVisuals[] = [];
 
         const w = PLANK_WIDTH;
         const h = PLANK_LENGTH;
 
-        createPlank(ctx, objects, bodies, ctx.x, ctx.surfaceY - h / 2, w, h);
-        createPlank(ctx, objects, bodies, ctx.x, ctx.surfaceY - h - h / 2 - EPS, w, h);
+        createPlank(ctx, objects, bodies, visuals, ctx.x, ctx.surfaceY - h / 2, w, h);
+        createPlank(ctx, objects, bodies, visuals, ctx.x, ctx.surfaceY - h - h / 2 - EPS, w, h);
 
-        return { objects, bodies, enableDynamics: () => enableBodiesDynamic(bodies) };
+        return {
+            objects,
+            bodies,
+            enableDynamics: () => enableBodiesDynamic(bodies),
+            setFrozenVisual: (frozen) => {
+                for (const visual of visuals) {
+                    visual.frozen.setVisible(frozen);
+                    visual.normal.setVisible(!frozen);
+                }
+            }
+        };
     }
 };
 
@@ -144,19 +189,57 @@ const arch: TowerDefinition = {
     spawn: (ctx) => {
         const objects: Trackable[] = [];
         const bodies: RapierBody[] = [];
+        const visuals: PlankVisuals[] = [];
 
         const pillarW = PLANK_WIDTH;
         const pillarH = PLANK_LENGTH;
         const pillarOffsetX = PLANK_LENGTH / 2 - PLANK_WIDTH / 2;
 
-        createPlank(ctx, objects, bodies, ctx.x - pillarOffsetX, ctx.surfaceY - pillarH / 2, pillarW, pillarH);
-        createPlank(ctx, objects, bodies, ctx.x + pillarOffsetX, ctx.surfaceY - pillarH / 2, pillarW, pillarH);
+        createPlank(
+            ctx,
+            objects,
+            bodies,
+            visuals,
+            ctx.x - pillarOffsetX,
+            ctx.surfaceY - pillarH / 2,
+            pillarW,
+            pillarH
+        );
+        createPlank(
+            ctx,
+            objects,
+            bodies,
+            visuals,
+            ctx.x + pillarOffsetX,
+            ctx.surfaceY - pillarH / 2,
+            pillarW,
+            pillarH
+        );
 
         const lintelW = PLANK_LENGTH;
         const lintelH = PLANK_WIDTH;
-        createPlank(ctx, objects, bodies, ctx.x, ctx.surfaceY - pillarH - lintelH / 2 - EPS, lintelW, lintelH);
+        createPlank(
+            ctx,
+            objects,
+            bodies,
+            visuals,
+            ctx.x,
+            ctx.surfaceY - pillarH - lintelH / 2 - EPS,
+            lintelW,
+            lintelH
+        );
 
-        return { objects, bodies, enableDynamics: () => enableBodiesDynamic(bodies) };
+        return {
+            objects,
+            bodies,
+            enableDynamics: () => enableBodiesDynamic(bodies),
+            setFrozenVisual: (frozen) => {
+                for (const visual of visuals) {
+                    visual.frozen.setVisible(frozen);
+                    visual.normal.setVisible(!frozen);
+                }
+            }
+        };
     }
 };
 

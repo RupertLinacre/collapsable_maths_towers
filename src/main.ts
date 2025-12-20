@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { generateProblem } from 'maths-game-problem-generator';
+import { checkAnswer, generateProblem, type MathProblem } from 'maths-game-problem-generator';
 import { RAPIER, createRapierPhysics } from './physics';
 import type { RapierPhysics, RapierBody } from './physics';
 import { TOWER_LIBRARY } from './towers';
@@ -21,8 +21,7 @@ import {
     PLATFORM_PARABOLA_Y_OFFSET,
     PLATFORM_WIDTH,
     QUESTION_TEXT_OFFSET_Y,
-    ANSWER_TEXT_OFFSET_Y,
-    STARTING_LIVES
+    ANSWER_TEXT_OFFSET_Y
 } from './config';
 
 // Phaser does not await an async Scene.create(), so Rapier must be initialized
@@ -38,10 +37,12 @@ const BALL_RADIUS = 20;
 
 type TowerTarget = {
     tower: TowerInstance;
-    answerText: Phaser.GameObjects.Text;
-    answerValue: number;
-    isCorrect: boolean;
+    questionText: Phaser.GameObjects.Text;
+    problem: MathProblem;
+    state: TowerState;
 };
+
+type TowerState = 'frozen' | 'unfrozen' | 'dynamic';
 
 class MainScene extends Phaser.Scene {
     private rapier!: RapierPhysics;
@@ -61,21 +62,25 @@ class MainScene extends Phaser.Scene {
 
     // Controls & State
     private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
-    private enterKey!: Phaser.Input.Keyboard.Key;
     private resetKey!: Phaser.Input.Keyboard.Key;
     private aimAngle: number = PERFECT_SHOT_ANGLE_DEG;
     private aimPower: number = PERFECT_SHOT_POWER;
     private hasLaunched = false;
     private cameraSmoothing = 0.06; // Smoothing per 60fps frame (Phaser style)
-    private towerHitResolved = false;
-    private lives = STARTING_LIVES;
+    private score = 0;
+    private scoredBodies = new Set<number>();
+    private answerInputValue = '';
+    private catapultProblem?: MathProblem;
 
     // UI
     private aimGraphics!: Phaser.GameObjects.Graphics;
     private statsText!: Phaser.GameObjects.Text;
-    private livesText!: Phaser.GameObjects.Text;
+    private scoreText!: Phaser.GameObjects.Text;
     private feedbackText!: Phaser.GameObjects.Text;
-    private questionText!: Phaser.GameObjects.Text;
+    private catapultQuestionText!: Phaser.GameObjects.Text;
+    private answerBox!: Phaser.GameObjects.Rectangle;
+    private answerText!: Phaser.GameObjects.Text;
+    private answerHintText!: Phaser.GameObjects.Text;
     private debugGraphics?: Phaser.GameObjects.Graphics;
 
     init() {
@@ -83,18 +88,13 @@ class MainScene extends Phaser.Scene {
         this.hasLaunched = false;
         this.aimAngle = PERFECT_SHOT_ANGLE_DEG;
         this.aimPower = PERFECT_SHOT_POWER;
-        this.towerHitResolved = false;
+        this.score = 0;
+        this.scoredBodies.clear();
+        this.answerInputValue = '';
+        this.catapultProblem = undefined;
 
         this.towerTargets.length = 0;
         this.trackedObjects.length = 0;
-
-        const storedLives = this.registry.get('lives');
-        if (typeof storedLives === 'number' && storedLives > 0) {
-            this.lives = storedLives;
-        } else {
-            this.lives = STARTING_LIVES;
-            this.registry.set('lives', this.lives);
-        }
     }
 
     constructor() {
@@ -113,6 +113,7 @@ class MainScene extends Phaser.Scene {
 
         // Sprites
         this.load.image('log1', new URL('./assets/images/log2.png', import.meta.url).toString());
+        this.load.image('log_frozen', new URL('./assets/images/log_frozen.png', import.meta.url).toString());
         this.load.image('beaver', new URL('./assets/images/beaver.png', import.meta.url).toString());
     }
 
@@ -135,13 +136,8 @@ class MainScene extends Phaser.Scene {
 
         // 4. UI & Controls
         this.cursors = this.input.keyboard!.createCursorKeys();
-        this.enterKey = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.ENTER);
         this.resetKey = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.R);
         this.aimGraphics = this.add.graphics().setDepth(100);
-        this.input.on(Phaser.Input.Events.POINTER_DOWN, this.launch, this);
-        this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
-            this.input.off(Phaser.Input.Events.POINTER_DOWN, this.launch, this);
-        });
 
         this.statsText = this.add.text(20, 20, '', {
             fontSize: '32px',
@@ -150,28 +146,42 @@ class MainScene extends Phaser.Scene {
             padding: { x: 10, y: 10 }
         }).setScrollFactor(0).setDepth(1000);
 
-        this.livesText = this.add.text(20, 140, '', {
+        this.scoreText = this.add.text(20, 110, '', {
             fontSize: '28px',
             color: '#ffffff',
             backgroundColor: '#000000aa',
             padding: { x: 10, y: 8 }
         }).setScrollFactor(0).setDepth(1000);
 
-        this.feedbackText = this.add.text(20, 210, '', {
+        this.feedbackText = this.add.text(20, 180, '', {
             fontSize: '26px',
             color: '#ffffff',
             backgroundColor: '#000000aa',
             padding: { x: 10, y: 8 }
         }).setScrollFactor(0).setDepth(1000);
 
-        this.questionText = this.add.text(this.catapultAnchor.x, this.catapultAnchor.y - QUESTION_TEXT_OFFSET_Y, '', {
-            fontSize: '36px',
-            color: '#1b1b1b',
-            backgroundColor: '#fff7c7',
-            padding: { x: 12, y: 8 }
-        }).setOrigin(0.5, 0.5).setDepth(900);
+        this.catapultQuestionText = this.add
+            .text(
+                this.catapultAnchor.x,
+                Math.min(this.catapultAnchor.y + QUESTION_TEXT_OFFSET_Y, FLOOR_Y - 80),
+                '',
+                {
+                fontSize: '32px',
+                color: '#1b1b1b',
+                backgroundColor: '#fff7c7',
+                padding: { x: 12, y: 8 }
+                }
+            )
+            .setOrigin(0.5, 0)
+            .setDepth(900);
 
-        this.createMathChallenge();
+        this.createAnswerInput();
+        this.createCatapultProblem();
+        this.feedbackText.setText('Answer a tower to unfreeze it. Answer the catapult to launch!');
+        this.input.keyboard?.on('keydown', this.handleAnswerKey, this);
+        this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+            this.input.keyboard?.off('keydown', this.handleAnswerKey, this);
+        });
 
         if (DEBUG_BOUNDS) {
             this.debugGraphics = this.add.graphics().setDepth(2000);
@@ -299,7 +309,10 @@ class MainScene extends Phaser.Scene {
         const def = Phaser.Utils.Array.GetRandom(TOWER_LIBRARY);
         const instance = def.spawn(ctx);
 
-        const answerText = this.add.text(towerX, surfaceY + ANSWER_TEXT_OFFSET_Y, '?', {
+        instance.setFrozenVisual?.(true);
+
+        const problem = generateProblem({ yearLevel: MATH_YEAR_LEVEL });
+        const questionText = this.add.text(towerX, surfaceY + ANSWER_TEXT_OFFSET_Y, `${problem.expression} = ?`, {
             fontSize: '32px',
             color: '#1b1b1b',
             backgroundColor: '#ffffffcc',
@@ -308,67 +321,128 @@ class MainScene extends Phaser.Scene {
 
         this.towerTargets.push({
             tower: instance,
-            answerText,
-            answerValue: 0,
-            isCorrect: false
+            questionText,
+            problem,
+            state: 'frozen'
         });
     }
 
-    private createMathChallenge() {
-        if (!this.towerTargets.length) return;
-
+    private createCatapultProblem() {
         const problem = generateProblem({ yearLevel: MATH_YEAR_LEVEL });
-        const correctIndex = Phaser.Math.Between(0, this.towerTargets.length - 1);
-
-        this.questionText.setText(`${problem.expression} = ?`);
-        this.feedbackText.setText('');
-
-        const correctValue = problem.answer;
-        const distractors = this.generateDistractors(correctValue, this.towerTargets.length - 1);
-        let distractorIndex = 0;
-
-        this.towerTargets.forEach((target, index) => {
-            const isCorrect = index === correctIndex;
-            const value = isCorrect ? correctValue : distractors[distractorIndex++];
-            target.isCorrect = isCorrect;
-            target.answerValue = value;
-            const display = isCorrect ? problem.formattedAnswer : this.formatAnswer(value);
-            target.answerText.setText(display);
-        });
+        this.catapultProblem = problem;
+        this.catapultQuestionText.setText(`${problem.expression} = ?`);
     }
 
-    private generateDistractors(correctValue: number, count: number) {
-        const results = new Set<number>();
-        const isInteger = Number.isInteger(correctValue);
-        const baseStep = isInteger ? 1 : 0.5;
-        const baseRange = Math.max(3, Math.round(Math.abs(correctValue) * 0.3));
+    private createAnswerInput() {
+        const camera = this.cameras.main;
+        const boxWidth = 320;
+        const boxHeight = 54;
+        const x = camera.width / 2;
+        const y = camera.height - 60;
 
-        let attempts = 0;
-        while (results.size < count && attempts < 200) {
-            attempts += 1;
-            const offset = Phaser.Math.Between(1, baseRange) * baseStep;
-            const sign = Phaser.Math.Between(0, 1) === 0 ? -1 : 1;
-            let candidate = correctValue + sign * offset;
-            if (!isFinite(candidate)) continue;
-            if (candidate < 0) candidate = Math.abs(candidate) + baseStep;
-            if (isInteger) candidate = Math.round(candidate);
-            if (Math.abs(candidate - correctValue) < 0.0001) continue;
-            results.add(candidate);
-        }
+        this.answerBox = this.add
+            .rectangle(x, y, boxWidth, boxHeight, 0xffffff, 0.95)
+            .setStrokeStyle(3, 0x2f2f2f, 1)
+            .setScrollFactor(0)
+            .setDepth(1000);
 
-        let bump = baseStep;
-        while (results.size < count) {
-            const candidate = isInteger ? Math.round(correctValue + bump) : correctValue + bump;
-            if (Math.abs(candidate - correctValue) >= 0.0001) results.add(candidate);
-            bump += baseStep;
-        }
+        this.answerText = this.add
+            .text(x, y, '', { fontSize: '28px', color: '#1b1b1b' })
+            .setOrigin(0.5, 0.5)
+            .setScrollFactor(0)
+            .setDepth(1001);
 
-        return Array.from(results);
+        this.answerHintText = this.add
+            .text(x, y - 44, 'Type answer + Enter', { fontSize: '20px', color: '#f6f6f6' })
+            .setOrigin(0.5, 0.5)
+            .setScrollFactor(0)
+            .setDepth(1001);
+
+        this.updateAnswerText();
     }
 
-    private formatAnswer(value: number) {
-        if (Number.isInteger(value)) return value.toString();
-        return parseFloat(value.toFixed(2)).toString();
+    private updateAnswerText() {
+        this.answerText.setText(this.answerInputValue);
+        const hasInput = this.answerInputValue.length > 0;
+        this.answerHintText.setVisible(!hasInput);
+        this.answerBox.setStrokeStyle(3, hasInput ? 0x2f2f2f : 0x555555, 1);
+    }
+
+    private handleAnswerKey(event: KeyboardEvent) {
+        if (event.key === 'Enter') {
+            this.submitAnswer();
+            return;
+        }
+
+        if (event.key === 'Backspace') {
+            this.answerInputValue = this.answerInputValue.slice(0, -1);
+            this.updateAnswerText();
+            return;
+        }
+
+        if (event.key === 'Escape') {
+            this.answerInputValue = '';
+            this.updateAnswerText();
+            return;
+        }
+
+        if (event.ctrlKey || event.metaKey || event.altKey) return;
+        if (event.key.length !== 1) return;
+
+        const isDigit = event.key >= '0' && event.key <= '9';
+        if (isDigit) {
+            this.answerInputValue += event.key;
+            this.updateAnswerText();
+            return;
+        }
+
+        if (event.key === '.' && !this.answerInputValue.includes('.')) {
+            this.answerInputValue += event.key;
+            this.updateAnswerText();
+            return;
+        }
+
+        if (event.key === '-' && this.answerInputValue.length === 0) {
+            this.answerInputValue += event.key;
+            this.updateAnswerText();
+        }
+    }
+
+    private submitAnswer() {
+        const trimmed = this.answerInputValue.trim();
+        if (!trimmed) return;
+
+        const numericValue = Number(trimmed);
+        const answerValue = Number.isFinite(numericValue) ? numericValue : trimmed;
+
+        let unfrozenCount = 0;
+        for (const target of this.towerTargets) {
+            if (target.state !== 'frozen') continue;
+            if (checkAnswer(target.problem, answerValue)) {
+                target.state = 'unfrozen';
+                target.tower.setFrozenVisual?.(false);
+                unfrozenCount += 1;
+            }
+        }
+
+        let launched = false;
+        if (!this.hasLaunched && this.catapultProblem && checkAnswer(this.catapultProblem, answerValue)) {
+            launched = true;
+            this.launch();
+        }
+
+        if (launched && unfrozenCount > 0) {
+            this.feedbackText.setText(`Nice! ${unfrozenCount} tower${unfrozenCount === 1 ? '' : 's'} unfrozen.`);
+        } else if (launched) {
+            this.feedbackText.setText('Correct! Launching...');
+        } else if (unfrozenCount > 0) {
+            this.feedbackText.setText(`Great! ${unfrozenCount} tower${unfrozenCount === 1 ? '' : 's'} unfrozen.`);
+        } else {
+            this.feedbackText.setText('Not quite. Try again!');
+        }
+
+        this.answerInputValue = '';
+        this.updateAnswerText();
     }
 
     // --- GAME LOOP ---
@@ -378,7 +452,8 @@ class MainScene extends Phaser.Scene {
         this.updateCamera(delta);
         this.drawAimArrow();
         this.applyRollingResistance();
-        this.checkTowerHits();
+        this.checkTowerActivations();
+        this.checkTowerGroundHits();
         this.drawDebugBounds();
     }
 
@@ -411,46 +486,69 @@ class MainScene extends Phaser.Scene {
         }
     }
 
-    private checkTowerHits() {
-        if (!this.hasLaunched || this.towerHitResolved) return;
+    private checkTowerActivations() {
         if (!this.ballBody) return;
 
+        const world = this.rapier.getWorld();
+        const impactBodies: RapierBody[] = [];
+
+        if (this.hasLaunched) impactBodies.push(this.ballBody);
+
+        for (const target of this.towerTargets) {
+            if (target.state === 'dynamic') {
+                impactBodies.push(...target.tower.bodies);
+            }
+        }
+
+        if (!impactBodies.length) return;
+
+        for (const target of this.towerTargets) {
+            if (target.state !== 'unfrozen') continue;
+            let hit = false;
+            for (const impactBody of impactBodies) {
+                for (const body of target.tower.bodies) {
+                    world.contactPair(impactBody.collider, body.collider, () => {
+                        hit = true;
+                    });
+                    if (hit) break;
+                }
+                if (hit) break;
+            }
+
+            if (hit) {
+                target.state = 'dynamic';
+                target.tower.enableDynamics?.();
+            }
+        }
+    }
+
+    private checkTowerGroundHits() {
+        if (!this.floorBody) return;
         const world = this.rapier.getWorld();
 
         for (const target of this.towerTargets) {
             for (const body of target.tower.bodies) {
+                const handle = body.collider.handle;
+                if (this.scoredBodies.has(handle)) continue;
+
                 let hit = false;
-                world.contactPair(this.ballBody.collider, body.collider, () => {
+                world.contactPair(body.collider, this.floorBody.collider, () => {
                     hit = true;
                 });
+
                 if (hit) {
-                    this.towerHitResolved = true;
-                    this.handleTowerHit(target);
-                    return;
+                    this.scoredBodies.add(handle);
+                    this.score += 1;
+                    this.updateUI();
                 }
             }
         }
     }
 
-    private handleTowerHit(target: TowerTarget) {
-        if (target.isCorrect) {
-            this.feedbackText.setText('Nice! You hit the correct tower.');
-        } else {
-            this.lives = Math.max(0, this.lives - 1);
-            this.registry.set('lives', this.lives);
-            if (this.lives > 0) {
-                this.feedbackText.setText(`Wrong tower. Lives left: ${this.lives}`);
-            } else {
-                this.feedbackText.setText('Out of lives! Press R to restart.');
-            }
-        }
-        this.updateUI();
-    }
-
     private handleInput() {
         // Reset (after launch)
         if (this.hasLaunched) {
-            if (Phaser.Input.Keyboard.JustDown(this.cursors.space) || Phaser.Input.Keyboard.JustDown(this.resetKey)) {
+            if (Phaser.Input.Keyboard.JustDown(this.resetKey)) {
                 this.scene.restart();
             }
             return;
@@ -479,18 +577,13 @@ class MainScene extends Phaser.Scene {
 
         if (this.aimAngle !== prevAngle || this.aimPower !== prevPower) this.updateUI();
 
-        // Launch: Space or Enter (click/tap handled by pointer event)
-        if (Phaser.Input.Keyboard.JustDown(this.cursors.space) || Phaser.Input.Keyboard.JustDown(this.enterKey)) {
-            this.launch();
-        }
     }
 
     private launch() {
         if (this.hasLaunched) return;
         this.hasLaunched = true;
-
-        const correctTarget = this.towerTargets.find((target) => target.isCorrect);
-        correctTarget?.tower.enableDynamics?.();
+        this.catapultProblem = undefined;
+        this.catapultQuestionText.setText('');
 
         this.ballBody.rigidBody.setGravityScale(1, true);
 
@@ -502,17 +595,17 @@ class MainScene extends Phaser.Scene {
         // Ball mass is implicitly calculated by density, but we can force velocity directly for clarity
         this.ballBody.rigidBody.setLinvel({ x: vx, y: vy }, true);
 
-        this.statsText.setText('PRESS SPACE (or R) TO RESET');
+        this.statsText.setText('PRESS R TO RESET');
         this.aimGraphics.clear();
     }
 
     private updateUI() {
         if (this.hasLaunched) {
-            this.statsText.setText('PRESS SPACE (or R) TO RESET');
+            this.statsText.setText('PRESS R TO RESET');
         } else {
             this.statsText.setText(`ANGLE: ${Math.abs(this.aimAngle)}°\nPOWER: ${this.aimPower}`);
         }
-        this.livesText.setText(`LIVES: ${this.lives}`);
+        this.scoreText.setText(`SCORE: ${this.score}`);
     }
 
     private drawAimArrow() {
