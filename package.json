@@ -18,6 +18,7 @@
   "dependencies": {
     "@dimforge/rapier2d-compat": "^0.19.3",
     "@phaserjs/rapier-connector": "^1.0.2",
+    "maths-game-problem-generator": "file:../maths-game-problem-generator",
     "phaser": "^3.90.0"
   }
 }

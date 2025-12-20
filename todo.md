@@ -6,3 +6,5 @@
 -
 
 could be letters and the towers are frozen unless you shoot the right one
+
+three lives, gotta hit the right tower

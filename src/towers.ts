@@ -19,6 +19,7 @@ export interface TowerSpawnContext {
 
 export interface TowerInstance {
     objects: Trackable[];
+    bodies: RapierBody[];
 
     enableDynamics?: () => void; // e.g. Fixed → Dynamic on launch
     step?: () => void; // e.g. grow one step
@@ -118,7 +119,7 @@ const single: TowerDefinition = {
 
         createPlank(ctx, objects, bodies, ctx.x, ctx.surfaceY - h / 2, w, h);
 
-        return { objects, enableDynamics: () => enableBodiesDynamic(bodies) };
+        return { objects, bodies, enableDynamics: () => enableBodiesDynamic(bodies) };
     }
 };
 
@@ -134,7 +135,7 @@ const stack2: TowerDefinition = {
         createPlank(ctx, objects, bodies, ctx.x, ctx.surfaceY - h / 2, w, h);
         createPlank(ctx, objects, bodies, ctx.x, ctx.surfaceY - h - h / 2 - EPS, w, h);
 
-        return { objects, enableDynamics: () => enableBodiesDynamic(bodies) };
+        return { objects, bodies, enableDynamics: () => enableBodiesDynamic(bodies) };
     }
 };
 
@@ -155,7 +156,7 @@ const arch: TowerDefinition = {
         const lintelH = PLANK_WIDTH;
         createPlank(ctx, objects, bodies, ctx.x, ctx.surfaceY - pillarH - lintelH / 2 - EPS, lintelW, lintelH);
 
-        return { objects, enableDynamics: () => enableBodiesDynamic(bodies) };
+        return { objects, bodies, enableDynamics: () => enableBodiesDynamic(bodies) };
     }
 };
 
