@@ -1,9 +1,10 @@
 import Phaser from 'phaser';
 import { checkAnswer, generateProblem, type MathProblem } from 'maths-game-problem-generator';
-import { RAPIER, createRapierPhysics } from './physics';
+import { RAPIER } from './physics';
 import type { RapierPhysics, RapierBody } from './physics';
 import { TOWER_LIBRARY } from './towers';
 import type { Trackable, TowerInstance, TowerSpawnContext } from './towers';
+import { GRAVITY_Y, createConfiguredRapier } from './physicsSettings';
 import {
     AIM_ANGLE_MAX_DEG,
     AIM_ANGLE_MIN_DEG,
@@ -29,7 +30,6 @@ import {
 await RAPIER.init();
 
 // --- CONFIGURATION ---
-const GRAVITY_Y = 9.81 * 100; // 100 pixels = 1 meter
 const FLOOR_Y = 800;
 const CAMERA_FLOOR_PADDING = 60; // Show a small slice of the ground
 const UNIVERSE_WIDTH = 200_000;
@@ -119,13 +119,7 @@ class MainScene extends Phaser.Scene {
 
     create() {
         // 1. Init Physics
-        const gravity = { x: 0, y: GRAVITY_Y };
-        this.rapier = createRapierPhysics(gravity, this);
-        const world = this.rapier.getWorld();
-        world.integrationParameters.numSolverIterations = 50;
-        world.integrationParameters.normalizedAllowedLinearError = 0.001;
-        world.integrationParameters.lengthUnit = 1000;
-        if (DEBUG_RAPIER) this.rapier.debugger(true);
+        this.rapier = createConfiguredRapier(this, DEBUG_RAPIER);
 
         // 2. Create World
         this.createInfiniteFloor();
