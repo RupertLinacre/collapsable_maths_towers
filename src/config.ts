@@ -1,15 +1,15 @@
-export const LEVEL_PLATFORM_COUNT: number = 12
+export const LEVEL_PLATFORM_COUNT: number = 2
 // Fraction (0..1) of the trajectory to leave empty before placing platforms.
 // Example: 0.5 starts placement at the apex; 0.33 starts after the first third.
-export const LEVEL_PLATFORM_GAP_FRACTION: number = 0.1;
+export const LEVEL_PLATFORM_GAP_FRACTION: number = 0.5;
 
 // Vertical distance from the floor to the catapult/origin point.
-export const CATAPULT_HEIGHT_ABOVE_FLOOR = 50;
+export const CATAPULT_HEIGHT_ABOVE_FLOOR = 200;
 
 // "Perfect shot" controls the reference trajectory (platform layout) and the initial aim.
 // Increase power to make the parabola wider (platforms further away).
-export const PERFECT_SHOT_ANGLE_DEG: number = -65;
-export const PERFECT_SHOT_POWER: number = 2000;
+export const PERFECT_SHOT_ANGLE_DEG: number = -55;
+export const PERFECT_SHOT_POWER: number = 1500;
 
 export const AIM_ANGLE_MIN_DEG = -90;
 export const AIM_ANGLE_MAX_DEG = 0;
@@ -32,6 +32,15 @@ export const ANSWER_TEXT_OFFSET_Y = 40;
 // Standard “building block” dimensions used by tower library.
 export const PLANK_WIDTH = 20; // thickness
 export const PLANK_LENGTH = 120; // long side (equal for all planks)
+
+// --- Background ---
+export const BACKGROUND_SCALE = 3.0;
+export const BACKGROUND_ANCHOR_X = 100;
+export const BACKGROUND_ANCHOR_Y = 1500;
+
+// --- Beaver / Ball ---
+export const BEAVER_RADIUS = 60;
+export const BEAVER_DENSITY = 200.0;
 
 // --- Debug ---
 export const DEBUG_RAPIER = false; // physics wireframes

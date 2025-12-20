@@ -10,7 +10,12 @@ import {
     AIM_ANGLE_MIN_DEG,
     AIM_POWER_MAX,
     AIM_POWER_MIN,
+    BACKGROUND_ANCHOR_X,
+    BACKGROUND_ANCHOR_Y,
+    BACKGROUND_SCALE,
     CATAPULT_HEIGHT_ABOVE_FLOOR,
+    BEAVER_DENSITY,
+    BEAVER_RADIUS,
     DEBUG_BOUNDS,
     DEBUG_RAPIER,
     LEVEL_PLATFORM_COUNT,
@@ -33,7 +38,6 @@ await RAPIER.init();
 const FLOOR_Y = 800;
 const CAMERA_FLOOR_PADDING = 60; // Show a small slice of the ground
 const UNIVERSE_WIDTH = 200_000;
-const BALL_RADIUS = 20;
 
 type TowerTarget = {
     tower: TowerInstance;
@@ -46,6 +50,8 @@ type TowerState = 'frozen' | 'unfrozen' | 'dynamic';
 
 class MainScene extends Phaser.Scene {
     private rapier!: RapierPhysics;
+    private backgroundImage?: Phaser.GameObjects.Image;
+    private backgroundAnchor = { x: BACKGROUND_ANCHOR_X, y: BACKGROUND_ANCHOR_Y };
 
     // Game Objects
     private ball!: Phaser.GameObjects.Container;
@@ -82,6 +88,7 @@ class MainScene extends Phaser.Scene {
     private answerText!: Phaser.GameObjects.Text;
     private answerHintText!: Phaser.GameObjects.Text;
     private debugGraphics?: Phaser.GameObjects.Graphics;
+    private splashSoundKeys = ['splash1', 'splash2', 'splash3', 'splash4'];
 
     init() {
         // Reset core state on every restart (Scene is reused)
@@ -115,6 +122,11 @@ class MainScene extends Phaser.Scene {
         this.load.image('log1', new URL('./assets/images/log2.png', import.meta.url).toString());
         this.load.image('log_frozen', new URL('./assets/images/log_frozen.png', import.meta.url).toString());
         this.load.image('beaver', new URL('./assets/images/beaver.png', import.meta.url).toString());
+        this.load.image('background', new URL('./assets/images/background.png', import.meta.url).toString());
+        this.load.audio('splash1', new URL('./assets/sound_effects/splashing_sounds/1.mp3', import.meta.url).toString());
+        this.load.audio('splash2', new URL('./assets/sound_effects/splashing_sounds/2.mp3', import.meta.url).toString());
+        this.load.audio('splash3', new URL('./assets/sound_effects/splashing_sounds/3.mp3', import.meta.url).toString());
+        this.load.audio('splash4', new URL('./assets/sound_effects/splashing_sounds/4.mp3', import.meta.url).toString());
     }
 
     create() {
@@ -124,6 +136,7 @@ class MainScene extends Phaser.Scene {
         // 2. Create World
         this.createInfiniteFloor();
         this.createPlayerBall();
+        this.createBackground();
 
         // 3. Generate Level based on Math
         this.generateParabolaLevel();
@@ -184,6 +197,15 @@ class MainScene extends Phaser.Scene {
         this.updateUI();
     }
 
+    private createBackground() {
+        this.backgroundImage = this.add
+            .image(this.backgroundAnchor.x, this.backgroundAnchor.y, 'background')
+            .setOrigin(0.5, 1)
+            .setDepth(-100)
+            .setAlpha(0.2);
+        this.backgroundImage.setScale(BACKGROUND_SCALE);
+    }
+
     private createInfiniteFloor() {
         // Visuals
         this.add.tileSprite(0, FLOOR_Y + 50, UNIVERSE_WIDTH, 100, 'ground_tile').setDepth(-1);
@@ -206,11 +228,11 @@ class MainScene extends Phaser.Scene {
 
         // "Beaver" Visual (Container so we can add a ring)
         const container = this.add.container(startX, startY);
-        container.setSize(BALL_RADIUS * 2, BALL_RADIUS * 2);
+        container.setSize(BEAVER_RADIUS * 2, BEAVER_RADIUS * 2);
 
-        const ring = this.add.circle(0, 0, BALL_RADIUS + 4, 0x000000, 0).setStrokeStyle(4, 0xffffff, 1);
+        const ring = this.add.circle(0, 0, BEAVER_RADIUS + 4, 0x000000, 0).setStrokeStyle(4, 0xffffff, 1);
         const beaver = this.add.image(0, 0, 'beaver');
-        const scale = Math.min((BALL_RADIUS * 2) / beaver.width, (BALL_RADIUS * 2) / beaver.height);
+        const scale = Math.min((BEAVER_RADIUS * 2) / beaver.width, (BEAVER_RADIUS * 2) / beaver.height);
         beaver.setScale(scale);
         container.add([ring, beaver]);
 
@@ -219,14 +241,14 @@ class MainScene extends Phaser.Scene {
 
         this.ballBody = this.rapier.addRigidBody(container, {
             rigidBodyType: RAPIER.RigidBodyType.Dynamic,
-            collider: RAPIER.ColliderDesc.ball(BALL_RADIUS)
+            collider: RAPIER.ColliderDesc.ball(BEAVER_RADIUS)
         });
 
         // Float mode until launch
         this.ballBody.rigidBody.setGravityScale(0, true);
         this.ballBody.collider.setRestitution(0.4);
         this.ballBody.collider.setFriction(1.5);
-        this.ballBody.collider.setDensity(500.0);
+        this.ballBody.collider.setDensity(BEAVER_DENSITY);
     }
 
     /**
@@ -469,7 +491,7 @@ class MainScene extends Phaser.Scene {
 
         const centerY = this.ballBody.rigidBody.translation().y;
         const distToFloor = FLOOR_Y - centerY;
-        const isOnGround = distToFloor <= BALL_RADIUS + 5;
+        const isOnGround = distToFloor <= BEAVER_RADIUS + 5;
 
         if (isOnGround) {
             this.ballBody.rigidBody.setLinearDamping(1.5);
@@ -534,9 +556,15 @@ class MainScene extends Phaser.Scene {
                     this.scoredBodies.add(handle);
                     this.score += 1;
                     this.updateUI();
+                    this.playSplashSound();
                 }
             }
         }
+    }
+
+    private playSplashSound() {
+        const key = Phaser.Utils.Array.GetRandom(this.splashSoundKeys);
+        this.sound.play(key, { volume: 0.6 });
     }
 
     private handleInput() {

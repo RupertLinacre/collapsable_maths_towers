@@ -1,7 +1,6 @@
 import type Phaser from 'phaser';
 import { RAPIER } from './physics';
 import type { RapierBody, RapierPhysics } from './physics';
-import { PLANK_LENGTH, PLANK_WIDTH } from './config';
 import { createPlank, type PlankVisuals, type Trackable } from './towerPlanks';
 
 export type { Trackable } from './towerPlanks';
@@ -30,12 +29,22 @@ export interface TowerInstance {
 }
 
 export interface TowerDefinition {
-    id: 'single' | 'stack2' | 'arch';
+    id: string;
     weight?: number; // optional; unused for now (uniform random)
     spawn: (ctx: TowerSpawnContext) => TowerInstance;
 }
 
-const EPS = 2;
+export type TowerSpecPart = {
+    dx: number;
+    dy: number;
+    w: number;
+    h: number;
+};
+
+export type TowerSpecFile = {
+    id: string;
+    parts: TowerSpecPart[];
+};
 
 function enableBodiesDynamic(bodies: RapierBody[]) {
     for (const body of bodies) {
@@ -44,116 +53,47 @@ function enableBodiesDynamic(bodies: RapierBody[]) {
     }
 }
 
-const single: TowerDefinition = {
-    id: 'single',
-    spawn: (ctx) => {
-        const objects: Trackable[] = [];
-        const bodies: RapierBody[] = [];
-        const visuals: PlankVisuals[] = [];
+const towerSpecModules = import.meta.glob('./assets/towerspecs/*.json', { eager: true }) as Record<
+    string,
+    { default: TowerSpecFile }
+>;
 
-        const w = PLANK_WIDTH;
-        const h = PLANK_LENGTH;
+function buildTowerDefinition(spec: TowerSpecFile): TowerDefinition {
+    return {
+        id: spec.id,
+        spawn: (ctx) => {
+            const objects: Trackable[] = [];
+            const bodies: RapierBody[] = [];
+            const visuals: PlankVisuals[] = [];
 
-        createPlank(ctx, objects, bodies, visuals, ctx.x, ctx.surfaceY - h / 2, w, h);
-
-        return {
-            objects,
-            bodies,
-            enableDynamics: () => enableBodiesDynamic(bodies),
-            setFrozenVisual: (frozen) => {
-                for (const visual of visuals) {
-                    visual.frozen.setVisible(frozen);
-                    visual.normal.setVisible(!frozen);
-                }
+            for (const part of spec.parts) {
+                createPlank(
+                    ctx,
+                    objects,
+                    bodies,
+                    visuals,
+                    ctx.x + part.dx,
+                    ctx.surfaceY + part.dy,
+                    part.w,
+                    part.h
+                );
             }
-        };
-    }
-};
 
-const stack2: TowerDefinition = {
-    id: 'stack2',
-    spawn: (ctx) => {
-        const objects: Trackable[] = [];
-        const bodies: RapierBody[] = [];
-        const visuals: PlankVisuals[] = [];
-
-        const w = PLANK_WIDTH;
-        const h = PLANK_LENGTH;
-
-        createPlank(ctx, objects, bodies, visuals, ctx.x, ctx.surfaceY - h / 2, w, h);
-        createPlank(ctx, objects, bodies, visuals, ctx.x, ctx.surfaceY - h - h / 2 - EPS, w, h);
-
-        return {
-            objects,
-            bodies,
-            enableDynamics: () => enableBodiesDynamic(bodies),
-            setFrozenVisual: (frozen) => {
-                for (const visual of visuals) {
-                    visual.frozen.setVisible(frozen);
-                    visual.normal.setVisible(!frozen);
+            return {
+                objects,
+                bodies,
+                enableDynamics: () => enableBodiesDynamic(bodies),
+                setFrozenVisual: (frozen) => {
+                    for (const visual of visuals) {
+                        visual.frozen.setVisible(frozen);
+                        visual.normal.setVisible(!frozen);
+                    }
                 }
-            }
-        };
-    }
-};
+            };
+        }
+    };
+}
 
-const arch: TowerDefinition = {
-    id: 'arch',
-    spawn: (ctx) => {
-        const objects: Trackable[] = [];
-        const bodies: RapierBody[] = [];
-        const visuals: PlankVisuals[] = [];
-
-        const pillarW = PLANK_WIDTH;
-        const pillarH = PLANK_LENGTH;
-        const pillarOffsetX = PLANK_LENGTH / 2 - PLANK_WIDTH / 2;
-
-        createPlank(
-            ctx,
-            objects,
-            bodies,
-            visuals,
-            ctx.x - pillarOffsetX,
-            ctx.surfaceY - pillarH / 2,
-            pillarW,
-            pillarH
-        );
-        createPlank(
-            ctx,
-            objects,
-            bodies,
-            visuals,
-            ctx.x + pillarOffsetX,
-            ctx.surfaceY - pillarH / 2,
-            pillarW,
-            pillarH
-        );
-
-        const lintelW = PLANK_LENGTH;
-        const lintelH = PLANK_WIDTH;
-        createPlank(
-            ctx,
-            objects,
-            bodies,
-            visuals,
-            ctx.x,
-            ctx.surfaceY - pillarH - lintelH / 2 - EPS,
-            lintelW,
-            lintelH
-        );
-
-        return {
-            objects,
-            bodies,
-            enableDynamics: () => enableBodiesDynamic(bodies),
-            setFrozenVisual: (frozen) => {
-                for (const visual of visuals) {
-                    visual.frozen.setVisible(frozen);
-                    visual.normal.setVisible(!frozen);
-                }
-            }
-        };
-    }
-};
-
-export const TOWER_LIBRARY: TowerDefinition[] = [single, stack2, arch];
+export const TOWER_LIBRARY: TowerDefinition[] = Object.values(towerSpecModules).map((mod) =>
+    buildTowerDefinition(mod.default)
+);
