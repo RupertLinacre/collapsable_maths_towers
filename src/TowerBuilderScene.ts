@@ -67,7 +67,7 @@ const BUILDER_BALL_RADIUS = PLANK_WIDTH;
 const REPEAT_INITIAL_DELAY_MS = 240;
 const REPEAT_INTERVAL_MS = 60;
 const HUD_TEXT =
-    'Arrows move | R rotate (plank) | +/- length (plank) | P place | Space test | Click remove | Select object above | Download button';
+    'Arrows move | R rotate (plank) | +/- length (plank) | P place | Space test | Click remove | Select object below | Load button | Download button';
 
 export class TowerBuilderScene extends Phaser.Scene {
     private rapier!: RapierPhysics;
@@ -90,6 +90,7 @@ export class TowerBuilderScene extends Phaser.Scene {
     private objectIdCounter = 0;
     private repeatStates: Record<string, RepeatState> = {};
     private objectButtons: Record<BuilderObjectType, ObjectButton> = {} as Record<BuilderObjectType, ObjectButton>;
+    private loadInput?: HTMLInputElement;
 
     private trackObject: (obj: Trackable, includeInBounds?: boolean) => void = () => {};
 
@@ -179,6 +180,26 @@ export class TowerBuilderScene extends Phaser.Scene {
             .setInteractive({ useHandCursor: true });
 
         downloadButton.on('pointerdown', () => this.downloadJson());
+
+        const loadButton = this.add
+            .text(0, 20, 'Load JSON', {
+                fontSize: '18px',
+                color: '#ffffff',
+                backgroundColor: '#000000aa',
+                padding: { x: 10, y: 6 }
+            })
+            .setOrigin(1, 0)
+            .setScrollFactor(0)
+            .setDepth(1000)
+            .setInteractive({ useHandCursor: true });
+
+        loadButton.setPosition(downloadButton.x - downloadButton.width - 12, 20);
+        loadButton.on('pointerdown', () => this.promptLoadJson());
+
+        this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+            this.loadInput?.remove();
+            this.loadInput = undefined;
+        });
     }
 
     update(_time: number, delta: number) {
@@ -496,7 +517,34 @@ export class TowerBuilderScene extends Phaser.Scene {
     private placePlank() {
         if (this.mode !== 'PAUSED') return;
         const spec = this.plankCursorSpec;
-        const { x, y } = this.getCursorPosition(spec);
+        const placedSpec: PlankSpec = {
+            type: 'plank',
+            dx: spec.dx,
+            dy: spec.dy,
+            w: spec.w,
+            h: spec.h
+        };
+
+        this.addPlacedPlank(placedSpec);
+    }
+
+    private placeBall() {
+        if (this.mode !== 'PAUSED') return;
+        const spec = this.ballCursorSpec;
+        const radius = spec.w / 2;
+        const placedSpec: BallSpec = {
+            type: 'ball',
+            dx: spec.dx,
+            dy: spec.dy,
+            r: radius
+        };
+
+        this.addPlacedBall(placedSpec);
+    }
+
+    private addPlacedPlank(spec: PlankSpec) {
+        const x = this.platformCenterX + spec.dx;
+        const y = this.surfaceY + spec.dy;
 
         const objects: Trackable[] = [];
         const bodies: RapierBody[] = [];
@@ -522,24 +570,13 @@ export class TowerBuilderScene extends Phaser.Scene {
         rect.setInteractive(new Phaser.Geom.Rectangle(-spec.w / 2, -spec.h / 2, spec.w, spec.h), Phaser.Geom.Rectangle.Contains);
 
         const id = `object-${this.objectIdCounter++}`;
-        const placedSpec: PlankSpec = {
-            type: 'plank',
-            dx: spec.dx,
-            dy: spec.dy,
-            w: spec.w,
-            h: spec.h
-        };
-
-        this.placed.push({ id, spec: placedSpec, container: rect, body });
-
+        this.placed.push({ id, spec, container: rect, body });
         rect.on('pointerdown', () => this.removePlaced(id));
     }
 
-    private placeBall() {
-        if (this.mode !== 'PAUSED') return;
-        const spec = this.ballCursorSpec;
-        const radius = spec.w / 2;
-        const { x, y } = this.getCursorPosition(spec);
+    private addPlacedBall(spec: BallSpec) {
+        const x = this.platformCenterX + spec.dx;
+        const y = this.surfaceY + spec.dy;
 
         const objects: Trackable[] = [];
         const bodies: RapierBody[] = [];
@@ -553,7 +590,7 @@ export class TowerBuilderScene extends Phaser.Scene {
             bodies,
             x,
             y,
-            radius,
+            spec.r,
             RAPIER.RigidBodyType.Fixed
         );
 
@@ -561,15 +598,7 @@ export class TowerBuilderScene extends Phaser.Scene {
         sprite.setInteractive({ useHandCursor: true });
 
         const id = `object-${this.objectIdCounter++}`;
-        const placedSpec: BallSpec = {
-            type: 'ball',
-            dx: spec.dx,
-            dy: spec.dy,
-            r: radius
-        };
-
-        this.placed.push({ id, spec: placedSpec, container: sprite, body });
-
+        this.placed.push({ id, spec, container: sprite, body });
         sprite.on('pointerdown', () => this.removePlaced(id));
     }
 
@@ -618,6 +647,94 @@ export class TowerBuilderScene extends Phaser.Scene {
 
         const [entry] = this.placed.splice(index, 1);
         this.rapier.destroy(entry.container);
+    }
+
+    private clearPlaced() {
+        for (const entry of this.placed) {
+            this.rapier.destroy(entry.container);
+        }
+        this.placed.length = 0;
+    }
+
+    private promptLoadJson() {
+        if (!this.loadInput) {
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = '.json,application/json';
+            input.style.position = 'fixed';
+            input.style.left = '-9999px';
+            input.addEventListener('change', () => {
+                void this.handleLoadFile();
+            });
+            document.body.appendChild(input);
+            this.loadInput = input;
+        }
+
+        this.loadInput.value = '';
+        this.loadInput.click();
+    }
+
+    private async handleLoadFile() {
+        const file = this.loadInput?.files?.[0];
+        if (!file) return;
+
+        try {
+            const text = await file.text();
+            this.loadFromJson(text, file.name);
+        } catch (error) {
+            console.error('Failed to read tower spec file.', error);
+        }
+    }
+
+    private loadFromJson(raw: string, filename?: string) {
+        let data: { parts?: Array<Record<string, unknown>> };
+        try {
+            data = JSON.parse(raw) as { parts?: Array<Record<string, unknown>> };
+        } catch (error) {
+            console.error('Invalid JSON in tower spec.', error);
+            return;
+        }
+
+        if (!Array.isArray(data.parts)) {
+            console.error('Tower spec missing parts array.', { filename });
+            return;
+        }
+
+        this.setMode('PAUSED');
+        this.clearPlaced();
+        this.objectIdCounter = 0;
+
+        for (const rawPart of data.parts) {
+            this.addPlacedFromSpec(rawPart);
+        }
+    }
+
+    private addPlacedFromSpec(rawPart: Record<string, unknown>) {
+        const dx = rawPart.dx;
+        const dy = rawPart.dy;
+        if (typeof dx !== 'number' || typeof dy !== 'number') {
+            console.warn('Skipping part with missing dx/dy', rawPart);
+            return;
+        }
+
+        const typeValue = rawPart.type;
+        const resolvedType: BuilderObjectType =
+            typeValue === 'ball' ? 'ball' : typeValue === 'plank' ? 'plank' : 'r' in rawPart ? 'ball' : 'plank';
+
+        if (resolvedType === 'ball') {
+            const radiusValue = rawPart.r;
+            const radius = typeof radiusValue === 'number' ? radiusValue : BUILDER_BALL_RADIUS;
+            const spec: BallSpec = { type: 'ball', dx, dy, r: radius };
+            this.addPlacedBall(spec);
+            return;
+        }
+
+        const wValue = rawPart.w;
+        const hValue = rawPart.h;
+        const w = typeof wValue === 'number' ? wValue : PLANK_WIDTH;
+        const h = typeof hValue === 'number' ? hValue : PLANK_LENGTH;
+        const spec: PlankSpec = { type: 'plank', dx, dy, w, h };
+        this.addPlacedPlank(spec);
     }
 
     private downloadJson() {
