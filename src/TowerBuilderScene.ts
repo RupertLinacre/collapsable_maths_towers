@@ -4,6 +4,8 @@ import type { RapierBody, RapierPhysics } from './physics';
 import { DEBUG_RAPIER, PLANK_LENGTH, PLANK_WIDTH, PLATFORM_HEIGHT, PLATFORM_WIDTH } from './config';
 import { createPlank, createPlankGhost, type PlankVisuals, type Trackable } from './towerPlanks';
 import { assertWorldConfigured, createConfiguredRapier } from './physicsSettings';
+import logUrl from './assets/images/tower_objects/log.png?as=url';
+import logFrozenUrl from './assets/images/tower_objects/log_frozen.png?as=url';
 
 type BuildMode = 'PAUSED' | 'RUNNING';
 
@@ -63,8 +65,8 @@ export class TowerBuilderScene extends Phaser.Scene {
     }
 
     preload() {
-        this.load.image('log1', new URL('./assets/images/tower_objects/log.png', import.meta.url).toString());
-        this.load.image('log_frozen', new URL('./assets/images/tower_objects/log.png', import.meta.url).toString());
+        this.load.image('log1', logUrl);
+        this.load.image('log_frozen', logFrozenUrl);
     }
 
     create() {

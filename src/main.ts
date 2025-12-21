@@ -30,6 +30,10 @@ import {
     QUESTION_TEXT_OFFSET_Y,
     ANSWER_TEXT_OFFSET_Y
 } from './config';
+import logUrl from './assets/images/tower_objects/log.png?as=url';
+import logFrozenUrl from './assets/images/tower_objects/log_frozen.png?as=url';
+import beaverUrl from './assets/images/beaver.png?as=url';
+import backgroundUrl from './assets/images/backgrounds/background.png?as=url';
 
 // Phaser does not await an async Scene.create(), so Rapier must be initialized
 // before the game boots (otherwise update() runs with uninitialized state).
@@ -123,10 +127,10 @@ class MainScene extends Phaser.Scene {
         g.destroy();
 
         // Sprites
-        this.load.image('log1', new URL('./assets/images/tower_objects/log.png', import.meta.url).toString());
-        this.load.image('log_frozen', new URL('./assets/images/tower_objects/log.png', import.meta.url).toString());
-        this.load.image('beaver', new URL('./assets/images/beaver.png', import.meta.url).toString());
-        this.load.image('background', new URL('./assets/images/backgrounds/background.png', import.meta.url).toString());
+        this.load.image('log1', logUrl);
+        this.load.image('log_frozen', logFrozenUrl);
+        this.load.image('beaver', beaverUrl);
+        this.load.image('background', backgroundUrl);
         this.load.audio('splash1', new URL('./assets/sound_effects/splashing_sounds/1.mp3', import.meta.url).toString());
         this.load.audio('splash2', new URL('./assets/sound_effects/splashing_sounds/2.mp3', import.meta.url).toString());
         this.load.audio('splash3', new URL('./assets/sound_effects/splashing_sounds/3.mp3', import.meta.url).toString());
@@ -206,7 +210,7 @@ class MainScene extends Phaser.Scene {
             .image(this.backgroundAnchor.x, this.backgroundAnchor.y, 'background')
             .setOrigin(0.5, 1)
             .setDepth(-100)
-            .setAlpha(0.2);
+            .setAlpha(1);
         this.backgroundImage.setScale(BACKGROUND_SCALE);
     }
 
