@@ -63,8 +63,8 @@ export class TowerBuilderScene extends Phaser.Scene {
     }
 
     preload() {
-        this.load.image('log1', new URL('./assets/images/log2.png', import.meta.url).toString());
-        this.load.image('log_frozen', new URL('./assets/images/log_frozen.png', import.meta.url).toString());
+        this.load.image('log1', new URL('./assets/images/tower_objects/log.png', import.meta.url).toString());
+        this.load.image('log_frozen', new URL('./assets/images/tower_objects/log.png', import.meta.url).toString());
     }
 
     create() {

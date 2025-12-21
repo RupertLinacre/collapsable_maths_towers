@@ -13,6 +13,7 @@ import {
     BACKGROUND_ANCHOR_X,
     BACKGROUND_ANCHOR_Y,
     BACKGROUND_SCALE,
+    BALL_RESET_DELAY_MS,
     CATAPULT_HEIGHT_ABOVE_FLOOR,
     BEAVER_DENSITY,
     BEAVER_RADIUS,
@@ -38,6 +39,7 @@ await RAPIER.init();
 const FLOOR_Y = 800;
 const CAMERA_FLOOR_PADDING = 60; // Show a small slice of the ground
 const UNIVERSE_WIDTH = 200_000;
+const BALL_STOP_SPEED = 5;
 
 type TowerTarget = {
     tower: TowerInstance;
@@ -77,6 +79,7 @@ class MainScene extends Phaser.Scene {
     private scoredBodies = new Set<number>();
     private answerInputValue = '';
     private catapultProblem?: MathProblem;
+    private ballStoppedAtMs: number | null = null;
 
     // UI
     private aimGraphics!: Phaser.GameObjects.Graphics;
@@ -99,6 +102,7 @@ class MainScene extends Phaser.Scene {
         this.scoredBodies.clear();
         this.answerInputValue = '';
         this.catapultProblem = undefined;
+        this.ballStoppedAtMs = null;
 
         this.towerTargets.length = 0;
         this.trackedObjects.length = 0;
@@ -119,10 +123,10 @@ class MainScene extends Phaser.Scene {
         g.destroy();
 
         // Sprites
-        this.load.image('log1', new URL('./assets/images/log2.png', import.meta.url).toString());
-        this.load.image('log_frozen', new URL('./assets/images/log_frozen.png', import.meta.url).toString());
+        this.load.image('log1', new URL('./assets/images/tower_objects/log.png', import.meta.url).toString());
+        this.load.image('log_frozen', new URL('./assets/images/tower_objects/log.png', import.meta.url).toString());
         this.load.image('beaver', new URL('./assets/images/beaver.png', import.meta.url).toString());
-        this.load.image('background', new URL('./assets/images/background.png', import.meta.url).toString());
+        this.load.image('background', new URL('./assets/images/backgrounds/background.png', import.meta.url).toString());
         this.load.audio('splash1', new URL('./assets/sound_effects/splashing_sounds/1.mp3', import.meta.url).toString());
         this.load.audio('splash2', new URL('./assets/sound_effects/splashing_sounds/2.mp3', import.meta.url).toString());
         this.load.audio('splash3', new URL('./assets/sound_effects/splashing_sounds/3.mp3', import.meta.url).toString());
@@ -463,13 +467,14 @@ class MainScene extends Phaser.Scene {
 
     // --- GAME LOOP ---
 
-    update(_time: number, delta: number) {
+    update(time: number, delta: number) {
         this.handleInput();
         this.updateCamera(delta);
         this.drawAimArrow();
         this.applyRollingResistance();
         this.checkTowerActivations();
         this.checkTowerGroundHits();
+        this.checkBallAutoReset(time);
         this.drawDebugBounds();
     }
 
@@ -604,6 +609,7 @@ class MainScene extends Phaser.Scene {
     private launch() {
         if (this.hasLaunched) return;
         this.hasLaunched = true;
+        this.ballStoppedAtMs = null;
         this.catapultProblem = undefined;
         this.catapultQuestionText.setText('');
 
@@ -619,6 +625,47 @@ class MainScene extends Phaser.Scene {
 
         this.statsText.setText('PRESS R TO RESET');
         this.aimGraphics.clear();
+    }
+
+    private checkBallAutoReset(timeMs: number) {
+        if (!this.hasLaunched) {
+            this.ballStoppedAtMs = null;
+            return;
+        }
+
+        const vel = this.ballBody.rigidBody.linvel();
+        const speed = Math.hypot(vel.x, vel.y);
+        if (speed > BALL_STOP_SPEED) {
+            this.ballStoppedAtMs = null;
+            return;
+        }
+
+        if (this.ballStoppedAtMs === null) {
+            this.ballStoppedAtMs = timeMs;
+            return;
+        }
+
+        if (timeMs - this.ballStoppedAtMs >= BALL_RESET_DELAY_MS) {
+            this.resetBallToCatapult();
+        }
+    }
+
+    private resetBallToCatapult() {
+        this.hasLaunched = false;
+        this.ballStoppedAtMs = null;
+        this.ballBody.rigidBody.setLinvel({ x: 0, y: 0 }, true);
+        this.ballBody.rigidBody.setAngvel(0, true);
+        this.ballBody.rigidBody.setTranslation(
+            { x: this.catapultAnchor.x, y: this.catapultAnchor.y },
+            true
+        );
+        this.ballBody.rigidBody.setGravityScale(0, true);
+        this.ball.setPosition(this.catapultAnchor.x, this.catapultAnchor.y);
+        this.createCatapultProblem();
+        this.answerInputValue = '';
+        this.updateAnswerText();
+        this.feedbackText.setText('Answer the catapult to launch again!');
+        this.updateUI();
     }
 
     private updateUI() {
