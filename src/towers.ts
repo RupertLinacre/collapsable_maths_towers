@@ -2,6 +2,7 @@ import type Phaser from 'phaser';
 import { RAPIER } from './physics';
 import type { RapierBody, RapierPhysics } from './physics';
 import { createPlank, type PlankVisuals, type Trackable } from './towerPlanks';
+import { createBall } from './towerBalls';
 
 export type { Trackable } from './towerPlanks';
 
@@ -34,12 +35,20 @@ export interface TowerDefinition {
     spawn: (ctx: TowerSpawnContext) => TowerInstance;
 }
 
-export type TowerSpecPart = {
-    dx: number;
-    dy: number;
-    w: number;
-    h: number;
-};
+export type TowerSpecPart =
+    | {
+          type?: 'plank';
+          dx: number;
+          dy: number;
+          w: number;
+          h: number;
+      }
+    | {
+          type: 'ball';
+          dx: number;
+          dy: number;
+          r: number;
+      };
 
 export type TowerSpecFile = {
     id: string;
@@ -67,6 +76,18 @@ function buildTowerDefinition(spec: TowerSpecFile): TowerDefinition {
             const visuals: PlankVisuals[] = [];
 
             for (const part of spec.parts) {
+                if (part.type === 'ball') {
+                    createBall(
+                        ctx,
+                        objects,
+                        bodies,
+                        ctx.x + part.dx,
+                        ctx.surfaceY + part.dy,
+                        part.r
+                    );
+                    continue;
+                }
+
                 createPlank(
                     ctx,
                     objects,

@@ -1,25 +1,46 @@
 import Phaser from 'phaser';
 import { RAPIER } from './physics';
 import type { RapierBody, RapierPhysics } from './physics';
-import { DEBUG_RAPIER, PLANK_LENGTH, PLANK_WIDTH, PLATFORM_HEIGHT, PLATFORM_WIDTH } from './config';
+import { BEAVER_RADIUS, DEBUG_RAPIER, PLANK_LENGTH, PLANK_WIDTH, PLATFORM_HEIGHT, PLATFORM_WIDTH } from './config';
 import { createPlank, createPlankGhost, type PlankVisuals, type Trackable } from './towerPlanks';
+import { createBall, createBallGhost } from './towerBalls';
 import { assertWorldConfigured, createConfiguredRapier } from './physicsSettings';
 import logUrl from './assets/images/tower_objects/log.png?as=url';
 import logFrozenUrl from './assets/images/tower_objects/log_frozen.png?as=url';
+import ballHappyUrl from './assets/images/balls/dad/ball_happy.png?as=url';
 
 type BuildMode = 'PAUSED' | 'RUNNING';
 
-type PlankSpec = {
+type BuilderObjectType = 'plank' | 'ball';
+
+type CursorSpec = {
     dx: number;
     dy: number;
     w: number;
     h: number;
 };
 
-type PlacedPlank = {
+type PlankSpec = {
+    type: 'plank';
+    dx: number;
+    dy: number;
+    w: number;
+    h: number;
+};
+
+type BallSpec = {
+    type: 'ball';
+    dx: number;
+    dy: number;
+    r: number;
+};
+
+type BuilderSpec = PlankSpec | BallSpec;
+
+type PlacedObject = {
     id: string;
-    spec: PlankSpec;
-    container: Phaser.GameObjects.Container;
+    spec: BuilderSpec;
+    container: Phaser.GameObjects.GameObject;
     body: RapierBody;
 };
 
@@ -31,21 +52,32 @@ type RepeatState = {
     repeatTimeMs: number;
 };
 
+type ObjectButton = {
+    container: Phaser.GameObjects.Container;
+    background: Phaser.GameObjects.Rectangle;
+    icon: Phaser.GameObjects.Image;
+    label: Phaser.GameObjects.Text;
+};
+
 const GRID = PLANK_WIDTH;
 const MOVE_STEP = PLANK_WIDTH / 2;
 const LENGTH_STEP = PLANK_WIDTH / 2;
 const SNAP_STEP = MOVE_STEP;
+const BUILDER_BALL_RADIUS = PLANK_WIDTH;
 const REPEAT_INITIAL_DELAY_MS = 240;
 const REPEAT_INTERVAL_MS = 60;
-const HUD_TEXT = 'Arrows move | R rotate | +/- length (half) | P place | Space test | Click remove | Download button';
+const HUD_TEXT =
+    'Arrows move | R rotate (plank) | +/- length (plank) | P place | Space test | Click remove | Select object above | Download button';
 
 export class TowerBuilderScene extends Phaser.Scene {
     private rapier!: RapierPhysics;
     private mode: BuildMode = 'PAUSED';
-    private placed: PlacedPlank[] = [];
-    private cursorSpec!: PlankSpec;
+    private placed: PlacedObject[] = [];
+    private selectedObject: BuilderObjectType = 'plank';
+    private plankCursorSpec!: CursorSpec;
+    private ballCursorSpec!: CursorSpec;
     private cursorOrientation: PlankOrientation = 'vertical';
-    private cursorGhost?: Phaser.GameObjects.Container;
+    private cursorGhost?: Phaser.GameObjects.Container | Phaser.GameObjects.Image;
     private platformCenterX = 0;
     private surfaceY = 0;
     private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
@@ -55,8 +87,9 @@ export class TowerBuilderScene extends Phaser.Scene {
     private lengthenKeys: Phaser.Input.Keyboard.Key[] = [];
     private shortenKeys: Phaser.Input.Keyboard.Key[] = [];
     private modeText!: Phaser.GameObjects.Text;
-    private plankIdCounter = 0;
+    private objectIdCounter = 0;
     private repeatStates: Record<string, RepeatState> = {};
+    private objectButtons: Record<BuilderObjectType, ObjectButton> = {} as Record<BuilderObjectType, ObjectButton>;
 
     private trackObject: (obj: Trackable, includeInBounds?: boolean) => void = () => {};
 
@@ -67,6 +100,7 @@ export class TowerBuilderScene extends Phaser.Scene {
     preload() {
         this.load.image('log1', logUrl);
         this.load.image('log_frozen', logFrozenUrl);
+        this.load.image('ball_happy', ballHappyUrl);
     }
 
     create() {
@@ -79,14 +113,21 @@ export class TowerBuilderScene extends Phaser.Scene {
 
         this.createPlatform();
 
-        this.cursorSpec = {
+        this.plankCursorSpec = {
             dx: 0,
             dy: -PLANK_LENGTH / 2,
             w: PLANK_WIDTH,
             h: PLANK_LENGTH
         };
+        this.ballCursorSpec = {
+            dx: 0,
+            dy: -BUILDER_BALL_RADIUS,
+            w: BUILDER_BALL_RADIUS * 2,
+            h: BUILDER_BALL_RADIUS * 2
+        };
         this.cursorOrientation = 'vertical';
-        this.snapCursor();
+        this.snapCursor(this.plankCursorSpec, 'plank');
+        this.snapCursor(this.ballCursorSpec, 'ball');
         this.rebuildGhost();
 
         this.cursors = this.input.keyboard!.createCursorKeys();
@@ -123,6 +164,8 @@ export class TowerBuilderScene extends Phaser.Scene {
             .setScrollFactor(0)
             .setDepth(1000);
 
+        this.createObjectSelector();
+
         const downloadButton = this.add
             .text(camera.width - 20, 20, 'Download JSON', {
                 fontSize: '18px',
@@ -158,16 +201,18 @@ export class TowerBuilderScene extends Phaser.Scene {
             this.handleRepeat([this.cursors.down], 'move-down', delta, () => this.moveCursor(0, MOVE_STEP));
         }
 
-        if (Phaser.Input.Keyboard.JustDown(this.rotateKey)) {
+        if (Phaser.Input.Keyboard.JustDown(this.rotateKey) && this.selectedObject === 'plank') {
             this.rotateCursor();
         }
 
         if (Phaser.Input.Keyboard.JustDown(this.placeKey)) {
-            this.placePlank();
+            this.placeSelectedObject();
         }
 
-        this.handleRepeat(this.lengthenKeys, 'lengthen', delta, () => this.adjustLength(LENGTH_STEP));
-        this.handleRepeat(this.shortenKeys, 'shorten', delta, () => this.adjustLength(-LENGTH_STEP));
+        if (this.selectedObject === 'plank') {
+            this.handleRepeat(this.lengthenKeys, 'lengthen', delta, () => this.adjustLength(LENGTH_STEP));
+            this.handleRepeat(this.shortenKeys, 'shorten', delta, () => this.adjustLength(-LENGTH_STEP));
+        }
     }
 
     private createPlatform() {
@@ -185,19 +230,141 @@ export class TowerBuilderScene extends Phaser.Scene {
         });
     }
 
+    private createObjectSelector() {
+        const camera = this.cameras.main;
+        const ui = this.add.container(camera.width / 2, camera.height - 40).setScrollFactor(0).setDepth(1000);
+
+        const label = this.add
+            .text(0, -18, 'Object', {
+                fontSize: '16px',
+                color: '#ffffff',
+                backgroundColor: '#000000aa',
+                padding: { x: 8, y: 4 }
+            })
+            .setOrigin(0.5, 0.5);
+
+        const buttonW = 96;
+        const buttonH = 44;
+        const spacing = 14;
+        const totalWidth = buttonW * 2 + spacing;
+        const leftX = -totalWidth / 2 + buttonW / 2;
+        const rightX = leftX + buttonW + spacing;
+
+        const plankButton = this.createObjectButton(
+            ui,
+            leftX,
+            12,
+            'plank',
+            'log1',
+            'Plank',
+            buttonW,
+            buttonH,
+            64,
+            18
+        );
+        const ballButton = this.createObjectButton(
+            ui,
+            rightX,
+            12,
+            'ball',
+            'ball_happy',
+            'Ball',
+            buttonW,
+            buttonH,
+            30,
+            30
+        );
+
+        ui.add(label);
+
+        this.objectButtons = {
+            plank: plankButton,
+            ball: ballButton
+        };
+
+        this.updateObjectSelectorVisuals();
+    }
+
+    private createObjectButton(
+        parent: Phaser.GameObjects.Container,
+        x: number,
+        y: number,
+        type: BuilderObjectType,
+        textureKey: string,
+        label: string,
+        width: number,
+        height: number,
+        iconW: number,
+        iconH: number
+    ) {
+        const container = this.add.container(x, y);
+        const background = this.add.rectangle(0, 0, width, height, 0x000000, 0.35).setStrokeStyle(2, 0xffffff, 0.4);
+        const icon = this.add.image(0, -4, textureKey).setDisplaySize(iconW, iconH);
+        const text = this.add.text(0, height / 2 - 12, label, {
+            fontSize: '12px',
+            color: '#ffffff'
+        }).setOrigin(0.5, 0.5);
+
+        container.add([background, icon, text]);
+        container.setSize(width, height);
+        container.setInteractive(new Phaser.Geom.Rectangle(-width / 2, -height / 2, width, height), Phaser.Geom.Rectangle.Contains);
+        container.on('pointerdown', () => this.setSelectedObject(type));
+
+        parent.add(container);
+        return { container, background, icon, label: text };
+    }
+
+    private setSelectedObject(type: BuilderObjectType) {
+        if (this.selectedObject === type) return;
+        this.selectedObject = type;
+        this.snapCursor(this.getActiveCursorSpec(), this.selectedObject);
+        this.rebuildGhost();
+        this.updateObjectSelectorVisuals();
+    }
+
+    private updateObjectSelectorVisuals() {
+        for (const [type, button] of Object.entries(this.objectButtons) as [BuilderObjectType, ObjectButton][]) {
+            const selected = type === this.selectedObject;
+            const fill = selected ? 0xffe08a : 0x000000;
+            const fillAlpha = selected ? 0.9 : 0.35;
+            const stroke = selected ? 0xffffff : 0x000000;
+            const strokeAlpha = selected ? 0.9 : 0.4;
+
+            button.background.setFillStyle(fill, fillAlpha);
+            button.background.setStrokeStyle(2, stroke, strokeAlpha);
+            button.icon.setAlpha(selected ? 1 : 0.7);
+            button.label.setColor(selected ? '#1b1b1b' : '#ffffff');
+            button.label.setAlpha(selected ? 1 : 0.85);
+        }
+    }
+
+    private getActiveCursorSpec() {
+        return this.selectedObject === 'plank' ? this.plankCursorSpec : this.ballCursorSpec;
+    }
+
+    private getCursorPosition(spec: CursorSpec) {
+        return { x: this.platformCenterX + spec.dx, y: this.surfaceY + spec.dy };
+    }
+
     private rebuildGhost() {
         this.cursorGhost?.destroy();
-        const x = this.platformCenterX + this.cursorSpec.dx;
-        const y = this.surfaceY + this.cursorSpec.dy;
-        this.cursorGhost = createPlankGhost(this, x, y, this.cursorSpec.w, this.cursorSpec.h);
+        const spec = this.getActiveCursorSpec();
+        const { x, y } = this.getCursorPosition(spec);
+
+        if (this.selectedObject === 'plank') {
+            this.cursorGhost = createPlankGhost(this, x, y, spec.w, spec.h);
+        } else {
+            this.cursorGhost = createBallGhost(this, x, y, spec.w / 2);
+        }
+
         this.cursorGhost.setAlpha(0.5).setDepth(200);
         this.cursorGhost.setVisible(this.mode === 'PAUSED');
     }
 
     private syncGhostPosition() {
         if (!this.cursorGhost) return;
-        const x = this.platformCenterX + this.cursorSpec.dx;
-        const y = this.surfaceY + this.cursorSpec.dy;
+        const spec = this.getActiveCursorSpec();
+        const { x, y } = this.getCursorPosition(spec);
         this.cursorGhost.setPosition(x, y);
     }
 
@@ -211,9 +378,15 @@ export class TowerBuilderScene extends Phaser.Scene {
         return snappedBottom - h / 2;
     }
 
-    private snapCursor() {
-        this.cursorSpec.dx = this.snapDx(this.cursorSpec.dx, this.cursorSpec.w);
-        this.cursorSpec.dy = this.snapDy(this.cursorSpec.dy, this.cursorSpec.h);
+    private snapCursor(spec: CursorSpec, type: BuilderObjectType) {
+        if (type === 'ball') {
+            spec.dx = this.gridSnap(spec.dx);
+            spec.dy = this.gridSnap(spec.dy);
+            return;
+        }
+
+        spec.dx = this.snapDx(spec.dx, spec.w);
+        spec.dy = this.snapDy(spec.dy, spec.h);
     }
 
     private snapDx(dx: number, w: number) {
@@ -223,49 +396,52 @@ export class TowerBuilderScene extends Phaser.Scene {
     }
 
     private moveCursor(dx: number, dy: number) {
-        this.cursorSpec.dx += dx;
-        this.cursorSpec.dy += dy;
-        this.snapCursor();
+        const spec = this.getActiveCursorSpec();
+        spec.dx += dx;
+        spec.dy += dy;
+        this.snapCursor(spec, this.selectedObject);
         this.syncGhostPosition();
     }
 
     private rotateCursor() {
-        const bottomRelative = this.cursorSpec.dy + this.cursorSpec.h / 2;
-        const leftEdge = this.cursorSpec.dx - this.cursorSpec.w / 2;
-        const currentLength = Math.max(this.cursorSpec.w, this.cursorSpec.h);
+        const spec = this.plankCursorSpec;
+        const bottomRelative = spec.dy + spec.h / 2;
+        const leftEdge = spec.dx - spec.w / 2;
+        const currentLength = Math.max(spec.w, spec.h);
         this.cursorOrientation = this.cursorOrientation === 'vertical' ? 'horizontal' : 'vertical';
         if (this.cursorOrientation === 'horizontal') {
-            this.cursorSpec.w = currentLength;
-            this.cursorSpec.h = PLANK_WIDTH;
+            spec.w = currentLength;
+            spec.h = PLANK_WIDTH;
         } else {
-            this.cursorSpec.w = PLANK_WIDTH;
-            this.cursorSpec.h = currentLength;
+            spec.w = PLANK_WIDTH;
+            spec.h = currentLength;
         }
-        this.cursorSpec.dy = bottomRelative - this.cursorSpec.h / 2;
-        this.cursorSpec.dx = leftEdge + this.cursorSpec.w / 2;
-        this.snapCursor();
+        spec.dy = bottomRelative - spec.h / 2;
+        spec.dx = leftEdge + spec.w / 2;
+        this.snapCursor(spec, 'plank');
         this.rebuildGhost();
     }
 
     private adjustLength(delta: number) {
-        const currentLength = Math.max(this.cursorSpec.w, this.cursorSpec.h);
+        const spec = this.plankCursorSpec;
+        const currentLength = Math.max(spec.w, spec.h);
         const nextLength = Math.max(PLANK_WIDTH, currentLength + delta);
         if (nextLength === currentLength) return;
 
-        const bottomRelative = this.cursorSpec.dy + this.cursorSpec.h / 2;
-        const leftEdge = this.cursorSpec.dx - this.cursorSpec.w / 2;
+        const bottomRelative = spec.dy + spec.h / 2;
+        const leftEdge = spec.dx - spec.w / 2;
 
         if (this.cursorOrientation === 'horizontal') {
-            this.cursorSpec.w = nextLength;
-            this.cursorSpec.h = PLANK_WIDTH;
-            this.cursorSpec.dx = leftEdge + this.cursorSpec.w / 2;
+            spec.w = nextLength;
+            spec.h = PLANK_WIDTH;
+            spec.dx = leftEdge + spec.w / 2;
         } else {
-            this.cursorSpec.w = PLANK_WIDTH;
-            this.cursorSpec.h = nextLength;
+            spec.w = PLANK_WIDTH;
+            spec.h = nextLength;
         }
 
-        this.cursorSpec.dy = bottomRelative - this.cursorSpec.h / 2;
-        this.snapCursor();
+        spec.dy = bottomRelative - spec.h / 2;
+        this.snapCursor(spec, 'plank');
         this.rebuildGhost();
     }
 
@@ -308,10 +484,19 @@ export class TowerBuilderScene extends Phaser.Scene {
         this.repeatStates[id] = state;
     }
 
+    private placeSelectedObject() {
+        if (this.selectedObject === 'ball') {
+            this.placeBall();
+            return;
+        }
+
+        this.placePlank();
+    }
+
     private placePlank() {
         if (this.mode !== 'PAUSED') return;
-        const x = this.platformCenterX + this.cursorSpec.dx;
-        const y = this.surfaceY + this.cursorSpec.dy;
+        const spec = this.plankCursorSpec;
+        const { x, y } = this.getCursorPosition(spec);
 
         const objects: Trackable[] = [];
         const bodies: RapierBody[] = [];
@@ -327,29 +512,65 @@ export class TowerBuilderScene extends Phaser.Scene {
             visuals,
             x,
             y,
-            this.cursorSpec.w,
-            this.cursorSpec.h,
+            spec.w,
+            spec.h,
             false,
             RAPIER.RigidBodyType.Fixed
         );
 
         rect.setDepth(150);
-        rect.setInteractive(
-            new Phaser.Geom.Rectangle(-this.cursorSpec.w / 2, -this.cursorSpec.h / 2, this.cursorSpec.w, this.cursorSpec.h),
-            Phaser.Geom.Rectangle.Contains
-        );
+        rect.setInteractive(new Phaser.Geom.Rectangle(-spec.w / 2, -spec.h / 2, spec.w, spec.h), Phaser.Geom.Rectangle.Contains);
 
-        const id = `plank-${this.plankIdCounter++}`;
-        const spec: PlankSpec = {
-            dx: this.cursorSpec.dx,
-            dy: this.cursorSpec.dy,
-            w: this.cursorSpec.w,
-            h: this.cursorSpec.h
+        const id = `object-${this.objectIdCounter++}`;
+        const placedSpec: PlankSpec = {
+            type: 'plank',
+            dx: spec.dx,
+            dy: spec.dy,
+            w: spec.w,
+            h: spec.h
         };
 
-        this.placed.push({ id, spec, container: rect, body });
+        this.placed.push({ id, spec: placedSpec, container: rect, body });
 
         rect.on('pointerdown', () => this.removePlaced(id));
+    }
+
+    private placeBall() {
+        if (this.mode !== 'PAUSED') return;
+        const spec = this.ballCursorSpec;
+        const radius = spec.w / 2;
+        const { x, y } = this.getCursorPosition(spec);
+
+        const objects: Trackable[] = [];
+        const bodies: RapierBody[] = [];
+        const { sprite, body } = createBall(
+            {
+                scene: this,
+                rapier: this.rapier,
+                trackObject: this.trackObject
+            },
+            objects,
+            bodies,
+            x,
+            y,
+            radius,
+            RAPIER.RigidBodyType.Fixed
+        );
+
+        sprite.setDepth(150);
+        sprite.setInteractive({ useHandCursor: true });
+
+        const id = `object-${this.objectIdCounter++}`;
+        const placedSpec: BallSpec = {
+            type: 'ball',
+            dx: spec.dx,
+            dy: spec.dy,
+            r: radius
+        };
+
+        this.placed.push({ id, spec: placedSpec, container: sprite, body });
+
+        sprite.on('pointerdown', () => this.removePlaced(id));
     }
 
     private toggleSimulation() {
