@@ -490,6 +490,7 @@ class MainScene extends Phaser.Scene {
         this.updateCamera(delta);
         this.drawAimArrow();
         this.applyRollingResistance();
+        this.applyDadBallRollingResistance();
         this.checkTowerActivations();
         this.checkTowerCrashSounds(time);
         this.checkDadBallKnockSound(time);
@@ -632,7 +633,7 @@ class MainScene extends Phaser.Scene {
 
         const world = this.rapier.getWorld();
         const allBodies: RapierBody[] = [this.ballBody];
-        const dadBallBodies: RapierBody[] = [];
+        const dadBallBodies: Array<{ body: RapierBody; radius: number }> = [];
 
         for (const target of this.towerTargets) {
             if (target.state !== 'dynamic') continue;
@@ -644,7 +645,8 @@ class MainScene extends Phaser.Scene {
 
         if (!dadBallBodies.length) return;
 
-        for (const dadBody of dadBallBodies) {
+        for (const dadBall of dadBallBodies) {
+            const dadBody = dadBall.body;
             const dadVel = dadBody.rigidBody.linvel();
             for (const body of allBodies) {
                 if (body === dadBody) continue;
@@ -661,6 +663,26 @@ class MainScene extends Phaser.Scene {
                 this.sound.play('ow', { volume: 0.7 });
                 this.lastOwSoundAtMs = timeMs;
                 return;
+            }
+        }
+    }
+
+    private applyDadBallRollingResistance() {
+        for (const target of this.towerTargets) {
+            if (target.state !== 'dynamic') continue;
+            const ballBodies = target.tower.ballBodies ?? [];
+            for (const ball of ballBodies) {
+                const centerY = ball.body.rigidBody.translation().y;
+                const distToFloor = FLOOR_Y - centerY;
+                const isOnGround = distToFloor <= ball.radius + 5;
+
+                if (isOnGround) {
+                    ball.body.rigidBody.setLinearDamping(1.5);
+                    ball.body.rigidBody.setAngularDamping(1.5);
+                } else {
+                    ball.body.rigidBody.setLinearDamping(0);
+                    ball.body.rigidBody.setAngularDamping(0);
+                }
             }
         }
     }
@@ -840,8 +862,14 @@ class MainScene extends Phaser.Scene {
         const smoothing = 1 - Math.pow(1 - this.cameraSmoothing, delta / 16.6667);
 
         const newZoom = Phaser.Math.Linear(camera.zoom, target.zoom, smoothing);
-        const newX = Phaser.Math.Linear(camera.midPoint.x, target.x, smoothing);
-        const newY = this.getPinnedCenterY(newZoom);
+        let newX = Phaser.Math.Linear(camera.midPoint.x, target.x, smoothing);
+        let newY = this.getPinnedCenterY(newZoom);
+
+        const clamped = this.clampCameraCenterToBackground(newX, newY, newZoom);
+        if (clamped) {
+            newX = clamped.x;
+            newY = clamped.y;
+        }
 
         camera.setZoom(newZoom);
         camera.centerOn(newX, newY);
@@ -882,9 +910,12 @@ class MainScene extends Phaser.Scene {
         const bottom = FLOOR_Y + CAMERA_FLOOR_PADDING;
         const requiredHeight = Math.max(1, bottom - top);
 
+        const backgroundMinZoom = this.getBackgroundMinZoom();
+        const zoomFloor = backgroundMinZoom ? Math.max(minZoom, backgroundMinZoom) : minZoom;
+
         const zoom = Phaser.Math.Clamp(
             Math.min(camera.width / paddedWidth, camera.height / requiredHeight),
-            minZoom,
+            zoomFloor,
             maxZoom
         );
 
@@ -897,6 +928,59 @@ class MainScene extends Phaser.Scene {
     private getPinnedCenterY(zoom: number) {
         const halfViewHeight = this.cameras.main.height / (2 * zoom);
         return (FLOOR_Y + CAMERA_FLOOR_PADDING) - halfViewHeight;
+    }
+
+    private getBackgroundMinZoom() {
+        const bounds = this.getBackgroundBounds();
+        if (!bounds) return null;
+
+        const camera = this.cameras.main;
+        return Math.max(camera.width / bounds.width, camera.height / bounds.height);
+    }
+
+    private clampCameraCenterToBackground(x: number, y: number, zoom: number) {
+        const bounds = this.getBackgroundBounds();
+        if (!bounds) return null;
+
+        const camera = this.cameras.main;
+        const halfViewW = camera.width / (2 * zoom);
+        const halfViewH = camera.height / (2 * zoom);
+
+        const left = bounds.left;
+        const right = bounds.right;
+        const top = bounds.top;
+        const bottom = bounds.bottom;
+
+        const minX = left + halfViewW;
+        const maxX = right - halfViewW;
+        const minY = top + halfViewH;
+        const maxY = bottom - halfViewH;
+
+        return {
+            x: minX > maxX ? (left + right) / 2 : Phaser.Math.Clamp(x, minX, maxX),
+            y: minY > maxY ? (top + bottom) / 2 : Phaser.Math.Clamp(y, minY, maxY)
+        };
+    }
+
+    private getBackgroundBounds() {
+        if (!this.backgroundImage) return null;
+        const sourceW = this.backgroundImage.width;
+        const sourceH = this.backgroundImage.height;
+        if (!isFinite(sourceW) || !isFinite(sourceH) || sourceW <= 0 || sourceH <= 0) return null;
+
+        const width = sourceW * BACKGROUND_SCALE;
+        const height = sourceH * BACKGROUND_SCALE;
+        const centerX = BACKGROUND_ANCHOR_X;
+        const bottomY = BACKGROUND_ANCHOR_Y;
+
+        return {
+            width,
+            height,
+            left: centerX - width / 2,
+            right: centerX + width / 2,
+            top: bottomY - height,
+            bottom: bottomY
+        };
     }
 }
 
