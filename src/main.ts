@@ -45,6 +45,10 @@ const FLOOR_Y = 800;
 const CAMERA_FLOOR_PADDING = 60; // Show a small slice of the ground
 const UNIVERSE_WIDTH = 200_000;
 const BALL_STOP_SPEED = 5;
+const CRASH_SOUND_COOLDOWN_MS = 180;
+const CRASH_SOUND_MIN_RELATIVE_SPEED = 60;
+const OW_SOUND_COOLDOWN_MS = 500;
+const OW_SOUND_MIN_RELATIVE_SPEED = 80;
 
 type TowerTarget = {
     tower: TowerInstance;
@@ -97,6 +101,9 @@ class MainScene extends Phaser.Scene {
     private answerHintText!: Phaser.GameObjects.Text;
     private debugGraphics?: Phaser.GameObjects.Graphics;
     private splashSoundKeys = ['splash1', 'splash2', 'splash3', 'splash4'];
+    private crashSoundKeys = ['crash1', 'crash2', 'crash3', 'crash4'];
+    private lastCrashSoundAtMs = 0;
+    private lastOwSoundAtMs = 0;
 
     init() {
         // Reset core state on every restart (Scene is reused)
@@ -137,6 +144,11 @@ class MainScene extends Phaser.Scene {
         this.load.audio('splash2', new URL('./assets/sound_effects/splashing_sounds/2.mp3', import.meta.url).toString());
         this.load.audio('splash3', new URL('./assets/sound_effects/splashing_sounds/3.mp3', import.meta.url).toString());
         this.load.audio('splash4', new URL('./assets/sound_effects/splashing_sounds/4.mp3', import.meta.url).toString());
+        this.load.audio('crash1', new URL('./assets/sound_effects/crashing_sounds/1.mp3', import.meta.url).toString());
+        this.load.audio('crash2', new URL('./assets/sound_effects/crashing_sounds/2.mp3', import.meta.url).toString());
+        this.load.audio('crash3', new URL('./assets/sound_effects/crashing_sounds/3.mp3', import.meta.url).toString());
+        this.load.audio('crash4', new URL('./assets/sound_effects/crashing_sounds/4.mp3', import.meta.url).toString());
+        this.load.audio('ow', new URL('./assets/sound_effects/balls/dad/ow.mp3', import.meta.url).toString());
     }
 
     create() {
@@ -479,6 +491,8 @@ class MainScene extends Phaser.Scene {
         this.drawAimArrow();
         this.applyRollingResistance();
         this.checkTowerActivations();
+        this.checkTowerCrashSounds(time);
+        this.checkDadBallKnockSound(time);
         this.checkTowerGroundHits();
         this.checkBallAutoReset(time);
         this.drawDebugBounds();
@@ -573,9 +587,92 @@ class MainScene extends Phaser.Scene {
         }
     }
 
+    private checkTowerCrashSounds(timeMs: number) {
+        if (timeMs - this.lastCrashSoundAtMs < CRASH_SOUND_COOLDOWN_MS) return;
+
+        const world = this.rapier.getWorld();
+        const bodies: RapierBody[] = [];
+
+        for (const target of this.towerTargets) {
+            if (target.state !== 'dynamic') continue;
+            for (const body of target.tower.bodies) {
+                if (body.collider.shapeType() === RAPIER.ShapeType.Cuboid) {
+                    bodies.push(body);
+                }
+            }
+        }
+
+        if (bodies.length < 2) return;
+
+        for (let i = 0; i < bodies.length; i += 1) {
+            const bodyA = bodies[i];
+            const velA = bodyA.rigidBody.linvel();
+            for (let j = i + 1; j < bodies.length; j += 1) {
+                const bodyB = bodies[j];
+                let hit = false;
+                world.contactPair(bodyA.collider, bodyB.collider, () => {
+                    hit = true;
+                });
+                if (!hit) continue;
+
+                const velB = bodyB.rigidBody.linvel();
+                const relativeSpeed = Math.hypot(velA.x - velB.x, velA.y - velB.y);
+                if (relativeSpeed < CRASH_SOUND_MIN_RELATIVE_SPEED) continue;
+
+                this.playCrashSound();
+                this.lastCrashSoundAtMs = timeMs;
+                return;
+            }
+        }
+    }
+
+    private checkDadBallKnockSound(timeMs: number) {
+        if (!this.ballBody) return;
+        if (timeMs - this.lastOwSoundAtMs < OW_SOUND_COOLDOWN_MS) return;
+
+        const world = this.rapier.getWorld();
+        const allBodies: RapierBody[] = [this.ballBody];
+        const dadBallBodies: RapierBody[] = [];
+
+        for (const target of this.towerTargets) {
+            if (target.state !== 'dynamic') continue;
+            allBodies.push(...target.tower.bodies);
+            if (target.tower.ballBodies?.length) {
+                dadBallBodies.push(...target.tower.ballBodies);
+            }
+        }
+
+        if (!dadBallBodies.length) return;
+
+        for (const dadBody of dadBallBodies) {
+            const dadVel = dadBody.rigidBody.linvel();
+            for (const body of allBodies) {
+                if (body === dadBody) continue;
+                let hit = false;
+                world.contactPair(dadBody.collider, body.collider, () => {
+                    hit = true;
+                });
+                if (!hit) continue;
+
+                const bodyVel = body.rigidBody.linvel();
+                const relativeSpeed = Math.hypot(dadVel.x - bodyVel.x, dadVel.y - bodyVel.y);
+                if (relativeSpeed < OW_SOUND_MIN_RELATIVE_SPEED) continue;
+
+                this.sound.play('ow', { volume: 0.7 });
+                this.lastOwSoundAtMs = timeMs;
+                return;
+            }
+        }
+    }
+
     private playSplashSound() {
         const key = Phaser.Utils.Array.GetRandom(this.splashSoundKeys);
         this.sound.play(key, { volume: 0.6 });
+    }
+
+    private playCrashSound() {
+        const key = Phaser.Utils.Array.GetRandom(this.crashSoundKeys);
+        this.sound.play(key, { volume: 0.7 });
     }
 
     private handleInput() {

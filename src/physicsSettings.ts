@@ -1,13 +1,13 @@
 import type Phaser from 'phaser';
 import { RAPIER, createRapierPhysics } from './physics';
-import { DEBUG_RAPIER } from './config';
+import { DEBUG_RAPIER, GRAVITY_MULTIPLIER } from './config';
 import type { RapierPhysics } from './physics';
 
 const SOLVER_ITERATIONS = 50;
 const ALLOWED_LINEAR_ERROR = 0.001;
 const LENGTH_UNIT = 1000;
 
-export const GRAVITY_Y = 9.81 * 50; // 100 pixels = 1 meter
+export const GRAVITY_Y = 9.81 * GRAVITY_MULTIPLIER; // 100 pixels = 1 meter
 
 export function configureRapierWorld(world: RAPIER.World) {
     world.integrationParameters.numSolverIterations = SOLVER_ITERATIONS;

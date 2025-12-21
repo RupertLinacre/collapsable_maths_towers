@@ -21,6 +21,7 @@ export interface TowerSpawnContext {
 export interface TowerInstance {
     objects: Trackable[];
     bodies: RapierBody[];
+    ballBodies?: RapierBody[];
 
     enableDynamics?: () => void; // e.g. Fixed → Dynamic on launch
     setFrozenVisual?: (frozen: boolean) => void;
@@ -74,10 +75,11 @@ function buildTowerDefinition(spec: TowerSpecFile): TowerDefinition {
             const objects: Trackable[] = [];
             const bodies: RapierBody[] = [];
             const visuals: PlankVisuals[] = [];
+            const ballBodies: RapierBody[] = [];
 
             for (const part of spec.parts) {
                 if (part.type === 'ball') {
-                    createBall(
+                    const { body } = createBall(
                         ctx,
                         objects,
                         bodies,
@@ -85,6 +87,7 @@ function buildTowerDefinition(spec: TowerSpecFile): TowerDefinition {
                         ctx.surfaceY + part.dy,
                         part.r
                     );
+                    ballBodies.push(body);
                     continue;
                 }
 
@@ -103,6 +106,7 @@ function buildTowerDefinition(spec: TowerSpecFile): TowerDefinition {
             return {
                 objects,
                 bodies,
+                ballBodies,
                 enableDynamics: () => enableBodiesDynamic(bodies),
                 setFrozenVisual: (frozen) => {
                     for (const visual of visuals) {

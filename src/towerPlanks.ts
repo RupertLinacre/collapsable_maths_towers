@@ -1,5 +1,6 @@
 import type Phaser from 'phaser';
 import { RAPIER } from './physics';
+import { PLANK_DENSITY } from './config';
 import type { RapierBody, RapierPhysics } from './physics';
 
 export type Trackable = Phaser.GameObjects.GameObject & { getBounds: () => Phaser.Geom.Rectangle };
@@ -17,7 +18,6 @@ export type PlankVisuals = {
 
 const PLANK_FRICTION = 0.7;
 const PLANK_RESTITUTION = 0.05;
-const PLANK_DENSITY = 1.0;
 const PLANK_TEXTURE_NORMAL = 'log1';
 const PLANK_TEXTURE_FROZEN = 'log_frozen';
 

@@ -9,7 +9,7 @@ export const CATAPULT_HEIGHT_ABOVE_FLOOR = 200;
 // "Perfect shot" controls the reference trajectory (platform layout) and the initial aim.
 // Increase power to make the parabola wider (platforms further away).
 export const PERFECT_SHOT_ANGLE_DEG: number = -55;
-export const PERFECT_SHOT_POWER: number = 1000;
+export const PERFECT_SHOT_POWER: number = 750;
 
 export const AIM_ANGLE_MIN_DEG = -90;
 export const AIM_ANGLE_MAX_DEG = 0;
@@ -32,6 +32,7 @@ export const ANSWER_TEXT_OFFSET_Y = 40;
 // Standard “building block” dimensions used by tower library.
 export const PLANK_WIDTH = 20; // thickness
 export const PLANK_LENGTH = 120; // long side (equal for all planks)
+export const PLANK_DENSITY = 4.0;
 
 // --- Background ---
 export const BACKGROUND_SCALE = 2.0;
@@ -40,10 +41,13 @@ export const BACKGROUND_ANCHOR_Y = 1000;
 
 // --- Beaver / Ball ---
 export const BEAVER_RADIUS = 60;
-export const BEAVER_DENSITY = 200.0;
+export const BEAVER_DENSITY = 1.0;
 // Delay before returning the ball after it comes to rest.
 export const BALL_RESET_DELAY_MS = 3000;
 
 // --- Debug ---
 export const DEBUG_RAPIER = false; // physics wireframes
 export const DEBUG_BOUNDS = false; // Phaser object AABBs
+
+// --- Physics ---
+export const GRAVITY_MULTIPLIER = 30;
