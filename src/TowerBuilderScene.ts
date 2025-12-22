@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { RAPIER } from './physics';
 import type { RapierBody, RapierPhysics } from './physics';
-import { BEAVER_RADIUS, DEBUG_RAPIER, PLANK_LENGTH, PLANK_WIDTH, PLATFORM_HEIGHT, PLATFORM_WIDTH } from './config';
+import { DEBUG_RAPIER, PLANK_LENGTH, PLANK_WIDTH, PLATFORM_HEIGHT, PLATFORM_WIDTH } from './config';
 import { createPlank, createPlankGhost, type PlankVisuals, type Trackable } from './towerPlanks';
 import { BALL_PREVIEW_TEXTURE_KEY, createBall, createBallGhost, preloadTowerBallTextures } from './towerBalls';
 import { assertWorldConfigured, createConfiguredRapier } from './physicsSettings';

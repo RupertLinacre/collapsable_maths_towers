@@ -15,6 +15,7 @@ export const AIM_ANGLE_MIN_DEG = -90;
 export const AIM_ANGLE_MAX_DEG = 0;
 export const AIM_POWER_MIN = 100;
 // Max launch power the player can select (keep >= PERFECT_SHOT_POWER).
+// Base max launch power (upgrades can increase this).
 export const AIM_POWER_MAX = 10000;
 
 export const PLATFORM_WIDTH = 200;
@@ -40,8 +41,11 @@ export const BACKGROUND_ANCHOR_X = 100;
 export const BACKGROUND_ANCHOR_Y = 1000;
 
 // --- Beaver / Ball ---
-export const BEAVER_RADIUS = 60;
-export const BEAVER_DENSITY = 1.0;
+export const BEAVER_RADIUS = 45;
+export const BEAVER_DENSITY = 0.8;
+export const BEAVER_RADIUS_LEVELS = [BEAVER_RADIUS, 60, 75];
+export const BEAVER_DENSITY_LEVELS = [BEAVER_DENSITY, 2, 5];
+export const BEAVER_POWER_LEVELS = [AIM_POWER_MAX, AIM_POWER_MAX + 2000, AIM_POWER_MAX + 4000];
 // Delay before returning the ball after it comes to rest.
 export const BALL_RESET_DELAY_MS = 3000;
 

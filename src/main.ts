@@ -3,7 +3,7 @@ import { checkAnswer, generateProblem, type MathProblem } from 'maths-game-probl
 import { RAPIER } from './physics';
 import type { RapierPhysics, RapierBody } from './physics';
 import { TOWER_LIBRARY } from './towers';
-import type { Trackable, TowerInstance, TowerSpawnContext } from './towers';
+import type { Trackable, TowerInstance, TowerSpawnContext, TowerDefinition } from './towers';
 import { GRAVITY_Y, createConfiguredRapier } from './physicsSettings';
 import { applyHiDpi } from './hiDpi';
 import {
@@ -16,20 +16,16 @@ import {
     BACKGROUND_SCALE,
     BALL_RESET_DELAY_MS,
     CATAPULT_HEIGHT_ABOVE_FLOOR,
-    BEAVER_DENSITY,
-    BEAVER_RADIUS,
+    BEAVER_DENSITY_LEVELS,
+    BEAVER_POWER_LEVELS,
+    BEAVER_RADIUS_LEVELS,
     DEBUG_BOUNDS,
     DEBUG_RAPIER,
-    LEVEL_PLATFORM_COUNT,
-    LEVEL_PLATFORM_GAP_FRACTION,
-    MATH_YEAR_LEVEL,
     PERFECT_SHOT_ANGLE_DEG,
     PERFECT_SHOT_POWER,
-    PLANK_WIDTH,
     PLATFORM_HEIGHT,
     PLATFORM_PARABOLA_Y_OFFSET,
     PLATFORM_WIDTH,
-    QUESTION_TEXT_OFFSET_Y,
     ANSWER_TEXT_OFFSET_Y
 } from './config';
 import logUrl from './assets/images/tower_objects/log.png?as=url';
@@ -37,6 +33,10 @@ import logFrozenUrl from './assets/images/tower_objects/log_frozen.png?as=url';
 import beaverUrl from './assets/images/balls/beaver/beaver.png?as=url';
 import backgroundUrl from './assets/images/backgrounds/background.png?as=url';
 import { preloadTowerBallTextures, setBallMood, type TowerBall } from './towerBalls';
+import { SettingsScene } from './SettingsScene';
+import { gameSettings } from './gameSettings';
+import { gameState, type BeaverUpgradeState } from './gameState';
+import { LEVELS, type LevelConfig } from './levels';
 
 // Phaser does not await an async Scene.create(), so Rapier must be initialized
 // before the game boots (otherwise update() runs with uninitialized state).
@@ -52,16 +52,32 @@ const CRASH_SOUND_MIN_RELATIVE_SPEED = 60;
 const OW_SOUND_COOLDOWN_MS = 500;
 const OW_SOUND_MIN_RELATIVE_SPEED = 80;
 const BALL_HIT_MIN_RELATIVE_SPEED = 40;
-const BALL_GROUND_SLOP = PLANK_WIDTH / 2;
+const HUD_PANEL_GAP = 12;
+const UPGRADE_PANEL_OFFSET_X = -210;
+const UPGRADE_PANEL_OFFSET_Y = -260;
+const UPGRADE_LINE_GAP = 10;
+const CATAPULT_PANEL_OFFSET_X = UPGRADE_PANEL_OFFSET_X;
+const CATAPULT_PANEL_OFFSET_Y = 80;
+const ANSWER_PANEL_GAP = 16;
+const ANSWER_BOX_WIDTH = 360;
+const ANSWER_BOX_HEIGHT = 54;
+const PANEL_TEXT_COLOR = '#1b1b1b';
+const PANEL_BG_COLOR = '#ffffffcc';
+const PANEL_BG_HEX = 0xffffff;
+const PANEL_BG_ALPHA = 0.8;
+const PANEL_BORDER_HEX = 0x2f2f2f;
+const PANEL_PADDING = { x: 10, y: 6 };
 
 type TowerTarget = {
     tower: TowerInstance;
-    questionText: Phaser.GameObjects.Text;
+    questionText?: Phaser.GameObjects.Text;
     problem: MathProblem;
     state: TowerState;
+    platformSurfaceY: number;
 };
 
 type TowerState = 'frozen' | 'unfrozen' | 'dynamic';
+type UpgradeCategory = 'size' | 'density' | 'power';
 
 class MainScene extends Phaser.Scene {
     private rapier!: RapierPhysics;
@@ -71,6 +87,8 @@ class MainScene extends Phaser.Scene {
     // Game Objects
     private ball!: Phaser.GameObjects.Container;
     private ballBody!: RapierBody;
+    private beaverSprite?: Phaser.GameObjects.Image;
+    private beaverRing?: Phaser.GameObjects.Arc;
     private towerTargets: TowerTarget[] = [];
     private floorBody!: RapierBody;
 
@@ -86,21 +104,39 @@ class MainScene extends Phaser.Scene {
     private resetKey!: Phaser.Input.Keyboard.Key;
     private aimAngle: number = PERFECT_SHOT_ANGLE_DEG;
     private aimPower: number = PERFECT_SHOT_POWER;
+    private maxAimPower: number = AIM_POWER_MAX;
     private hasLaunched = false;
     private cameraSmoothing = 0.06; // Smoothing per 60fps frame (Phaser style)
     private score = 0;
     private scoredBodies = new Set<number>();
     private answerInputValue = '';
     private catapultProblem?: MathProblem;
+    private upgradeState: BeaverUpgradeState = { sizeLevel: 0, densityLevel: 0, powerLevel: 0 };
+    private upgradeProblems: Record<UpgradeCategory, MathProblem | null> = {
+        size: null,
+        density: null,
+        power: null
+    };
     private ballStoppedAtMs: number | null = null;
     private dpr = 1;
+    private currentBeaverRadius = BEAVER_RADIUS_LEVELS[0];
+    private currentBeaverDensity = BEAVER_DENSITY_LEVELS[0];
+    private levelIndex = 0;
+    private levelConfig!: LevelConfig;
+    private activeTowerDefs: TowerDefinition[] = [];
+    private levelComplete = false;
+    private towerBallTotal = 0;
+    private towerBallDown = 0;
 
     // UI
     private aimGraphics!: Phaser.GameObjects.Graphics;
     private statsText!: Phaser.GameObjects.Text;
     private scoreText!: Phaser.GameObjects.Text;
     private feedbackText!: Phaser.GameObjects.Text;
+    private levelText!: Phaser.GameObjects.Text;
     private catapultQuestionText!: Phaser.GameObjects.Text;
+    private upgradeTitleText!: Phaser.GameObjects.Text;
+    private upgradeQuestionTexts!: Record<UpgradeCategory, Phaser.GameObjects.Text>;
     private answerBox!: Phaser.GameObjects.Rectangle;
     private answerText!: Phaser.GameObjects.Text;
     private answerHintText!: Phaser.GameObjects.Text;
@@ -111,11 +147,17 @@ class MainScene extends Phaser.Scene {
     private lastOwSoundAtMs = 0;
     private handleResize = () => {
         this.dpr = applyHiDpi(this.scale).dpr;
-        this.updateAnswerLayout();
+        this.updateHudLayout();
     };
 
-    init() {
+    init(data: { levelIndex?: number } = {}) {
         // Reset core state on every restart (Scene is reused)
+        this.levelIndex = data.levelIndex ?? gameState.levelIndex ?? 0;
+        gameState.levelIndex = this.levelIndex;
+        this.levelConfig = LEVELS[this.levelIndex] ?? LEVELS[LEVELS.length - 1];
+        this.upgradeState = { ...gameState.upgrades };
+        this.refreshBeaverStats();
+
         this.hasLaunched = false;
         this.aimAngle = PERFECT_SHOT_ANGLE_DEG;
         this.aimPower = PERFECT_SHOT_POWER;
@@ -123,7 +165,12 @@ class MainScene extends Phaser.Scene {
         this.scoredBodies.clear();
         this.answerInputValue = '';
         this.catapultProblem = undefined;
+        this.upgradeProblems = { size: null, density: null, power: null };
         this.ballStoppedAtMs = null;
+        this.levelComplete = false;
+        this.towerBallTotal = 0;
+        this.towerBallDown = 0;
+        this.activeTowerDefs = [];
 
         this.towerTargets.length = 0;
         this.trackedObjects.length = 0;
@@ -173,9 +220,11 @@ class MainScene extends Phaser.Scene {
         // 2. Create World
         this.createInfiniteFloor();
         this.createPlayerBall();
+        this.applyBeaverStats();
         this.createBackground();
 
         // 3. Generate Level based on Math
+        this.activeTowerDefs = this.getLevelTowerDefinitions();
         this.generateParabolaLevel();
 
         // 4. UI & Controls
@@ -184,43 +233,53 @@ class MainScene extends Phaser.Scene {
         this.aimGraphics = this.add.graphics().setDepth(100);
 
         this.statsText = this.add.text(20, 20, '', {
-            fontSize: '32px',
-            color: '#ffffff',
-            backgroundColor: '#000000aa',
-            padding: { x: 10, y: 10 }
-        }).setScrollFactor(0).setDepth(1000);
+            fontSize: '26px',
+            color: PANEL_TEXT_COLOR,
+            backgroundColor: PANEL_BG_COLOR,
+            padding: PANEL_PADDING
+        }).setDepth(1000);
 
         this.scoreText = this.add.text(20, 110, '', {
-            fontSize: '28px',
-            color: '#ffffff',
-            backgroundColor: '#000000aa',
-            padding: { x: 10, y: 8 }
-        }).setScrollFactor(0).setDepth(1000);
+            fontSize: '24px',
+            color: PANEL_TEXT_COLOR,
+            backgroundColor: PANEL_BG_COLOR,
+            padding: PANEL_PADDING
+        }).setDepth(1000);
 
         this.feedbackText = this.add.text(20, 180, '', {
-            fontSize: '26px',
-            color: '#ffffff',
-            backgroundColor: '#000000aa',
-            padding: { x: 10, y: 8 }
-        }).setScrollFactor(0).setDepth(1000);
+            fontSize: '22px',
+            color: PANEL_TEXT_COLOR,
+            backgroundColor: PANEL_BG_COLOR,
+            padding: PANEL_PADDING
+        }).setDepth(1000);
+
+        this.levelText = this.add.text(20, 250, '', {
+            fontSize: '24px',
+            color: PANEL_TEXT_COLOR,
+            backgroundColor: PANEL_BG_COLOR,
+            padding: PANEL_PADDING
+        }).setDepth(1000);
 
         this.catapultQuestionText = this.add
             .text(
-                this.catapultAnchor.x,
-                Math.min(this.catapultAnchor.y + QUESTION_TEXT_OFFSET_Y, FLOOR_Y - 80),
+                this.catapultAnchor.x + CATAPULT_PANEL_OFFSET_X,
+                this.catapultAnchor.y + CATAPULT_PANEL_OFFSET_Y,
                 '',
                 {
-                    fontSize: '32px',
-                    color: '#1b1b1b',
-                    backgroundColor: '#fff7c7',
-                    padding: { x: 12, y: 8 }
+                    fontSize: '24px',
+                    color: PANEL_TEXT_COLOR,
+                    backgroundColor: PANEL_BG_COLOR,
+                    padding: PANEL_PADDING
                 }
             )
-            .setOrigin(0.5, 0)
+            .setOrigin(0, 0)
             .setDepth(900);
+        this.catapultQuestionText.setWordWrapWidth(ANSWER_BOX_WIDTH);
 
         this.createAnswerInput();
         this.createCatapultProblem();
+        this.createUpgradeUi();
+        this.createUpgradeProblems();
         this.feedbackText.setText('Answer a tower to unfreeze it. Answer the catapult to launch!');
         this.input.keyboard?.on('keydown', this.handleAnswerKey, this);
         this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
@@ -231,6 +290,7 @@ class MainScene extends Phaser.Scene {
             this.debugGraphics = this.add.graphics().setDepth(2000);
         }
 
+        this.updateTowerBallCounts();
         this.updateUI();
     }
 
@@ -262,30 +322,61 @@ class MainScene extends Phaser.Scene {
         const startX = -600;
         const startY = FLOOR_Y - CATAPULT_HEIGHT_ABOVE_FLOOR;
         this.catapultAnchor = { x: startX, y: startY };
+        const radius = this.currentBeaverRadius;
 
         // "Beaver" Visual (Container so we can add a ring)
         const container = this.add.container(startX, startY);
-        container.setSize(BEAVER_RADIUS * 2, BEAVER_RADIUS * 2);
+        container.setSize(radius * 2, radius * 2);
 
-        const ring = this.add.circle(0, 0, BEAVER_RADIUS + 4, 0x000000, 0).setStrokeStyle(4, 0xffffff, 1);
+        const ring = this.add.circle(0, 0, radius + 4, 0x000000, 0).setStrokeStyle(4, 0xffffff, 1);
         const beaver = this.add.image(0, 0, 'beaver');
-        const scale = Math.min((BEAVER_RADIUS * 2) / beaver.width, (BEAVER_RADIUS * 2) / beaver.height);
+        const scale = Math.min((radius * 2) / beaver.width, (radius * 2) / beaver.height);
         beaver.setScale(scale);
         container.add([ring, beaver]);
+        this.beaverRing = ring;
+        this.beaverSprite = beaver;
 
         this.ball = container;
         this.trackObject(this.ball as unknown as Trackable, true);
 
         this.ballBody = this.rapier.addRigidBody(container, {
             rigidBodyType: RAPIER.RigidBodyType.Dynamic,
-            collider: RAPIER.ColliderDesc.ball(BEAVER_RADIUS)
+            collider: RAPIER.ColliderDesc.ball(radius)
         });
 
         // Float mode until launch
         this.ballBody.rigidBody.setGravityScale(0, true);
         this.ballBody.collider.setRestitution(0.4);
         this.ballBody.collider.setFriction(1.5);
-        this.ballBody.collider.setDensity(BEAVER_DENSITY);
+        this.ballBody.collider.setDensity(this.currentBeaverDensity);
+    }
+
+    private refreshBeaverStats() {
+        const sizeIndex = Phaser.Math.Clamp(this.upgradeState.sizeLevel, 0, BEAVER_RADIUS_LEVELS.length - 1);
+        const densityIndex = Phaser.Math.Clamp(this.upgradeState.densityLevel, 0, BEAVER_DENSITY_LEVELS.length - 1);
+        const powerIndex = Phaser.Math.Clamp(this.upgradeState.powerLevel, 0, BEAVER_POWER_LEVELS.length - 1);
+
+        this.currentBeaverRadius = BEAVER_RADIUS_LEVELS[sizeIndex];
+        this.currentBeaverDensity = BEAVER_DENSITY_LEVELS[densityIndex];
+        this.maxAimPower = BEAVER_POWER_LEVELS[powerIndex];
+    }
+
+    private applyBeaverStats() {
+        this.refreshBeaverStats();
+        if (!this.ballBody || !this.ball) return;
+
+        const radius = this.currentBeaverRadius;
+        this.ball.setSize(radius * 2, radius * 2);
+        this.ballBody.collider.setRadius(radius);
+        this.ballBody.collider.setDensity(this.currentBeaverDensity);
+
+        if (this.beaverRing) this.beaverRing.setRadius(radius + 4);
+        if (this.beaverSprite) {
+            const scale = Math.min((radius * 2) / this.beaverSprite.width, (radius * 2) / this.beaverSprite.height);
+            this.beaverSprite.setScale(scale);
+        }
+
+        this.aimPower = Phaser.Math.Clamp(this.aimPower, AIM_POWER_MIN, this.maxAimPower);
     }
 
     /**
@@ -317,12 +408,12 @@ class MainScene extends Phaser.Scene {
         const tEnd = (-b + Math.sqrt(disc)) / (2 * a);
         if (!isFinite(tEnd) || tEnd <= 0) return;
 
-        const gap = Phaser.Math.Clamp(LEVEL_PLATFORM_GAP_FRACTION, 0, 0.99);
+        const gap = Phaser.Math.Clamp(this.levelConfig.platformGapFraction, 0, 0.99);
         const tStart = gap * tReturnToStartY;
         const tStartClamped = Math.min(tStart, tEnd);
 
-        for (let i = 0; i < LEVEL_PLATFORM_COUNT; i++) {
-            const alphaWithin = LEVEL_PLATFORM_COUNT === 1 ? 0.5 : i / (LEVEL_PLATFORM_COUNT - 1);
+        for (let i = 0; i < this.levelConfig.platformCount; i++) {
+            const alphaWithin = this.levelConfig.platformCount === 1 ? 0.5 : i / (this.levelConfig.platformCount - 1);
             const t = Phaser.Math.Linear(tStartClamped, tEnd, alphaWithin);
 
             // Kinematic Equation: p = p0 + v*t + 0.5*a*t^2
@@ -359,12 +450,12 @@ class MainScene extends Phaser.Scene {
             trackObject: this.trackObject
         };
 
-        const def = Phaser.Utils.Array.GetRandom(TOWER_LIBRARY);
+        const def = Phaser.Utils.Array.GetRandom(this.activeTowerDefs);
         const instance = def.spawn(ctx);
 
         instance.setFrozenVisual?.(true);
 
-        const problem = generateProblem({ yearLevel: MATH_YEAR_LEVEL });
+        const problem = this.generateProblemFromSettings();
         const questionText = this.add.text(towerX, surfaceY + ANSWER_TEXT_OFFSET_Y, `${problem.expression} = ?`, {
             fontSize: '32px',
             color: '#1b1b1b',
@@ -376,39 +467,128 @@ class MainScene extends Phaser.Scene {
             tower: instance,
             questionText,
             problem,
-            state: 'frozen'
+            state: 'frozen',
+            platformSurfaceY: surfaceY
         });
     }
 
+    private getLevelTowerDefinitions(): TowerDefinition[] {
+        const ids = new Set(this.levelConfig.towerIds);
+        const defs = TOWER_LIBRARY.filter((def) => ids.has(def.id));
+        if (!defs.length) {
+            console.warn('No matching tower definitions for level; falling back to full library.');
+            return TOWER_LIBRARY;
+        }
+        return defs;
+    }
+
+    private updateTowerBallCounts() {
+        let total = 0;
+        for (const target of this.towerTargets) {
+            total += target.tower.ballBodies?.length ?? 0;
+        }
+        this.towerBallTotal = total;
+        this.towerBallDown = 0;
+        this.updateUI();
+    }
+
     private createCatapultProblem() {
-        const problem = generateProblem({ yearLevel: MATH_YEAR_LEVEL });
+        const problem = this.generateProblemFromSettings();
         this.catapultProblem = problem;
         this.catapultQuestionText.setText(`${problem.expression} = ?`);
+        this.updateAnswerLayout();
+    }
+
+    private createUpgradeUi() {
+        const baseX = this.catapultAnchor.x + UPGRADE_PANEL_OFFSET_X;
+        const baseY = this.catapultAnchor.y + UPGRADE_PANEL_OFFSET_Y;
+
+        this.upgradeTitleText = this.add
+            .text(baseX, baseY, 'Beaver upgrades', {
+                fontSize: '26px',
+                color: PANEL_TEXT_COLOR,
+                backgroundColor: PANEL_BG_COLOR,
+                padding: PANEL_PADDING
+            })
+            .setOrigin(0, 1)
+            .setDepth(900);
+        this.upgradeTitleText.setVisible(true);
+
+        this.upgradeQuestionTexts = {
+            size: this.add
+                .text(baseX, baseY + 10, '', {
+                    fontSize: '22px',
+                    color: PANEL_TEXT_COLOR,
+                    backgroundColor: PANEL_BG_COLOR,
+                    padding: PANEL_PADDING
+                })
+                .setOrigin(0, 0)
+                .setDepth(900),
+            density: this.add
+                .text(baseX, baseY + 55, '', {
+                    fontSize: '22px',
+                    color: PANEL_TEXT_COLOR,
+                    backgroundColor: PANEL_BG_COLOR,
+                    padding: PANEL_PADDING
+                })
+                .setOrigin(0, 0)
+                .setDepth(900),
+            power: this.add
+                .text(baseX, baseY + 100, '', {
+                    fontSize: '22px',
+                    color: PANEL_TEXT_COLOR,
+                    backgroundColor: PANEL_BG_COLOR,
+                    padding: PANEL_PADDING
+                })
+                .setOrigin(0, 0)
+                .setDepth(900)
+        };
+
+        this.updateUpgradeUi();
+    }
+
+    private createUpgradeProblems() {
+        const usedAnswers = new Set<number>();
+        const categories: UpgradeCategory[] = ['size', 'density', 'power'];
+
+        for (const category of categories) {
+            if (!this.canUpgrade(category)) {
+                this.upgradeProblems[category] = null;
+                continue;
+            }
+            const problem = this.generateUniqueProblem(usedAnswers);
+            this.upgradeProblems[category] = problem;
+            usedAnswers.add(problem.answer);
+        }
+
+        this.updateUpgradeUi();
     }
 
     private createAnswerInput() {
-        const camera = this.cameras.main;
-        const boxWidth = 320;
-        const boxHeight = 54;
-        const x = camera.width / 2;
-        const y = camera.height - 60;
+        const boxWidth = ANSWER_BOX_WIDTH;
+        const boxHeight = ANSWER_BOX_HEIGHT;
+        const panelLeft = this.catapultAnchor.x + CATAPULT_PANEL_OFFSET_X;
+        const panelCenterX = panelLeft + ANSWER_BOX_WIDTH / 2;
+        const y = this.catapultAnchor.y + CATAPULT_PANEL_OFFSET_Y;
 
         this.answerBox = this.add
-            .rectangle(x, y, boxWidth, boxHeight, 0xffffff, 0.95)
-            .setStrokeStyle(3, 0x2f2f2f, 1)
-            .setScrollFactor(0)
+            .rectangle(panelCenterX, y, boxWidth, boxHeight, PANEL_BG_HEX, PANEL_BG_ALPHA)
+            .setStrokeStyle(3, PANEL_BORDER_HEX, 1)
             .setDepth(1000);
 
         this.answerText = this.add
-            .text(x, y, '', { fontSize: '28px', color: '#1b1b1b' })
+            .text(panelCenterX, y, '', { fontSize: '26px', color: PANEL_TEXT_COLOR })
             .setOrigin(0.5, 0.5)
-            .setScrollFactor(0)
             .setDepth(1001);
 
         this.answerHintText = this.add
-            .text(x, y - 44, 'Type answer + Enter', { fontSize: '20px', color: '#f6f6f6' })
-            .setOrigin(0.5, 0.5)
-            .setScrollFactor(0)
+            .text(panelLeft, y - 44, 'Type answer + Enter', {
+                fontSize: '20px',
+                color: PANEL_TEXT_COLOR,
+                backgroundColor: PANEL_BG_COLOR,
+                padding: PANEL_PADDING
+            })
+            .setOrigin(0, 0.5)
             .setDepth(1001);
 
         this.updateAnswerLayout();
@@ -416,28 +596,56 @@ class MainScene extends Phaser.Scene {
     }
 
     private updateAnswerLayout() {
-        if (!this.answerBox || !this.answerText || !this.answerHintText) return;
-        const camera = this.cameras.main;
-        const viewWidth = camera.width / camera.zoom;
-        const viewHeight = camera.height / camera.zoom;
-        const x = viewWidth / 2;
-        const y = viewHeight - 60;
-        this.answerBox.setPosition(x, y);
-        this.answerText.setPosition(x, y);
-        this.answerHintText.setPosition(x, y - 44);
+        if (!this.answerBox || !this.answerText || !this.answerHintText || !this.catapultQuestionText) return;
+        const panelLeft = this.catapultAnchor.x + CATAPULT_PANEL_OFFSET_X;
+        const panelY = this.catapultAnchor.y + CATAPULT_PANEL_OFFSET_Y;
+        const panelCenterX = panelLeft + ANSWER_BOX_WIDTH / 2;
+
+        this.catapultQuestionText.setOrigin(0, 0).setPosition(panelLeft, panelY);
+
+        const questionHeight = this.catapultQuestionText.height;
+        const answerTop = panelY + questionHeight + ANSWER_PANEL_GAP;
+        const answerCenterY = answerTop + ANSWER_BOX_HEIGHT / 2;
+
+        this.answerBox.setSize(ANSWER_BOX_WIDTH, ANSWER_BOX_HEIGHT);
+        this.answerBox.setPosition(panelCenterX, answerCenterY);
+        this.answerText.setPosition(panelCenterX, answerCenterY);
+        const hintY = answerTop - this.answerHintText.height - 6;
+        this.answerHintText.setPosition(panelLeft, hintY);
+    }
+
+    private updateUpgradeLayout() {
+        if (!this.upgradeTitleText || !this.upgradeQuestionTexts) return;
+        const baseX = this.catapultAnchor.x + UPGRADE_PANEL_OFFSET_X;
+        const baseY = this.catapultAnchor.y + UPGRADE_PANEL_OFFSET_Y;
+        this.upgradeTitleText.setOrigin(0, 1).setPosition(baseX, baseY);
+
+        let y = baseY + 10;
+        const categories: UpgradeCategory[] = ['size', 'density', 'power'];
+        for (const category of categories) {
+            const text = this.upgradeQuestionTexts[category];
+            text.setOrigin(0, 0).setPosition(baseX, y);
+            y += text.height + UPGRADE_LINE_GAP;
+        }
     }
 
     private updateHudLayout() {
-        if (!this.statsText || !this.scoreText || !this.feedbackText) return;
-        const camera = this.cameras.main;
-        const viewWidth = camera.width / camera.zoom;
-        const viewHeight = camera.height / camera.zoom;
-        const boxWidth = this.answerBox?.width ?? 320;
-        const x = viewWidth / 2 - boxWidth / 2;
-        const baseY = viewHeight - 300;
-        this.statsText.setOrigin(0, 0).setPosition(x, baseY);
-        this.scoreText.setOrigin(0, 0).setPosition(x, baseY + 70);
-        this.feedbackText.setOrigin(0, 0).setPosition(x, baseY + 130);
+        if (!this.statsText || !this.scoreText || !this.feedbackText || !this.levelText) return;
+        const upgradeBaseX = this.catapultAnchor.x + UPGRADE_PANEL_OFFSET_X;
+        const upgradeBaseY = this.catapultAnchor.y + UPGRADE_PANEL_OFFSET_Y;
+        const upgradeTop = this.upgradeTitleText ? upgradeBaseY - this.upgradeTitleText.height : upgradeBaseY;
+
+        const blocks = [this.levelText, this.statsText, this.scoreText, this.feedbackText];
+        const totalHeight =
+            blocks.reduce((sum, text) => sum + text.height, 0) + HUD_PANEL_GAP * Math.max(0, blocks.length - 1);
+
+        let y = upgradeTop - totalHeight - HUD_PANEL_GAP;
+        for (const text of blocks) {
+            text.setOrigin(0, 0).setPosition(upgradeBaseX, y);
+            y += text.height + HUD_PANEL_GAP;
+        }
+
+        this.updateUpgradeLayout();
         this.updateAnswerLayout();
     }
 
@@ -445,10 +653,117 @@ class MainScene extends Phaser.Scene {
         this.answerText.setText(this.answerInputValue);
         const hasInput = this.answerInputValue.length > 0;
         this.answerHintText.setVisible(!hasInput);
-        this.answerBox.setStrokeStyle(3, hasInput ? 0x2f2f2f : 0x555555, 1);
+        this.answerBox.setStrokeStyle(3, hasInput ? PANEL_BORDER_HEX : 0x555555, 1);
+    }
+
+    private updateUpgradeUi() {
+        if (!this.upgradeQuestionTexts) return;
+        const categories: UpgradeCategory[] = ['size', 'density', 'power'];
+        for (const category of categories) {
+            const label = this.getUpgradeLabel(category);
+            const problem = this.upgradeProblems[category];
+            const text = problem ? `${label}: ${problem.expression} = ?` : `${label}: maxed`;
+            this.upgradeQuestionTexts[category].setText(text);
+        }
+    }
+
+    private getUpgradeLabel(category: UpgradeCategory) {
+        const label = category === 'size' ? 'Size' : category === 'density' ? 'Density' : 'Power';
+        const level =
+            category === 'size'
+                ? this.upgradeState.sizeLevel + 1
+                : category === 'density'
+                  ? this.upgradeState.densityLevel + 1
+                  : this.upgradeState.powerLevel + 1;
+        const max =
+            category === 'size'
+                ? BEAVER_RADIUS_LEVELS.length
+                : category === 'density'
+                  ? BEAVER_DENSITY_LEVELS.length
+                  : BEAVER_POWER_LEVELS.length;
+        return `${label} ${level}/${max}`;
+    }
+
+    private canUpgrade(category: UpgradeCategory) {
+        if (category === 'size') return this.upgradeState.sizeLevel < BEAVER_RADIUS_LEVELS.length - 1;
+        if (category === 'density') return this.upgradeState.densityLevel < BEAVER_DENSITY_LEVELS.length - 1;
+        return this.upgradeState.powerLevel < BEAVER_POWER_LEVELS.length - 1;
+    }
+
+    private applyUpgrade(category: UpgradeCategory) {
+        if (!this.canUpgrade(category)) return '';
+
+        if (category === 'size') this.upgradeState.sizeLevel += 1;
+        if (category === 'density') this.upgradeState.densityLevel += 1;
+        if (category === 'power') this.upgradeState.powerLevel += 1;
+
+        gameState.upgrades = { ...this.upgradeState };
+        this.applyBeaverStats();
+        this.refreshUpgradeProblem(category);
+        this.updateUI();
+
+        return this.getUpgradeLabel(category);
+    }
+
+    private tryUpgrade(answerValue: number | string) {
+        const categories: UpgradeCategory[] = ['size', 'density', 'power'];
+        for (const category of categories) {
+            const problem = this.upgradeProblems[category];
+            if (!problem) continue;
+            if (!checkAnswer(problem, answerValue)) continue;
+            return this.applyUpgrade(category);
+        }
+        return '';
+    }
+
+    private generateUniqueProblem(usedAnswers: Set<number>, maxAttempts = 6) {
+        let problem = this.generateProblemFromSettings();
+        for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+            if (!usedAnswers.has(problem.answer)) return problem;
+            problem = this.generateProblemFromSettings();
+        }
+        return problem;
+    }
+
+    private refreshUpgradeProblem(category: UpgradeCategory) {
+        if (!this.canUpgrade(category)) {
+            this.upgradeProblems[category] = null;
+            this.updateUpgradeUi();
+            return;
+        }
+
+        const usedAnswers = new Set<number>();
+        const categories: UpgradeCategory[] = ['size', 'density', 'power'];
+        for (const other of categories) {
+            if (other === category) continue;
+            const problem = this.upgradeProblems[other];
+            if (problem) usedAnswers.add(problem.answer);
+        }
+
+        this.upgradeProblems[category] = this.generateUniqueProblem(usedAnswers);
+        this.updateUpgradeUi();
+    }
+
+    private generateProblemFromSettings() {
+        const { yearLevel, problemType } = gameSettings;
+        if (problemType) {
+            try {
+                return generateProblem({ yearLevel, type: problemType });
+            } catch (error) {
+                console.warn('Problem type not available, falling back to year-only problem.', error);
+            }
+        }
+        return generateProblem({ yearLevel });
     }
 
     private handleAnswerKey(event: KeyboardEvent) {
+        if (this.levelComplete) {
+            if (event.key === 'Enter') {
+                this.advanceLevel();
+            }
+            return;
+        }
+
         if (event.key === 'Enter') {
             this.submitAnswer();
             return;
@@ -495,12 +810,16 @@ class MainScene extends Phaser.Scene {
         const numericValue = Number(trimmed);
         const answerValue = Number.isFinite(numericValue) ? numericValue : trimmed;
 
+        const upgradeLabel = this.tryUpgrade(answerValue);
+
         let unfrozenCount = 0;
         for (const target of this.towerTargets) {
             if (target.state !== 'frozen') continue;
             if (checkAnswer(target.problem, answerValue)) {
                 target.state = 'unfrozen';
                 target.tower.setFrozenVisual?.(false);
+                target.questionText?.destroy();
+                target.questionText = undefined;
                 unfrozenCount += 1;
             }
         }
@@ -511,12 +830,15 @@ class MainScene extends Phaser.Scene {
             this.launch();
         }
 
-        if (launched && unfrozenCount > 0) {
-            this.feedbackText.setText(`Nice! ${unfrozenCount} tower${unfrozenCount === 1 ? '' : 's'} unfrozen.`);
-        } else if (launched) {
-            this.feedbackText.setText('Correct! Launching...');
-        } else if (unfrozenCount > 0) {
-            this.feedbackText.setText(`Great! ${unfrozenCount} tower${unfrozenCount === 1 ? '' : 's'} unfrozen.`);
+        const feedbackParts: string[] = [];
+        if (upgradeLabel) feedbackParts.push(`Upgrade: ${upgradeLabel}.`);
+        if (unfrozenCount > 0) {
+            feedbackParts.push(`${unfrozenCount} tower${unfrozenCount === 1 ? '' : 's'} unfrozen.`);
+        }
+        if (launched) feedbackParts.push('Launching...');
+
+        if (feedbackParts.length) {
+            this.feedbackText.setText(feedbackParts.join(' '));
         } else {
             this.feedbackText.setText('Not quite. Try again!');
         }
@@ -539,6 +861,7 @@ class MainScene extends Phaser.Scene {
         this.checkDadBallKnockSound(time);
         this.updateTowerBallEmotions();
         this.checkTowerGroundHits();
+        this.checkLevelCompletion();
         this.checkBallAutoReset(time);
         this.drawDebugBounds();
     }
@@ -561,7 +884,7 @@ class MainScene extends Phaser.Scene {
 
         const centerY = this.ballBody.rigidBody.translation().y;
         const distToFloor = FLOOR_Y - centerY;
-        const isOnGround = distToFloor <= BEAVER_RADIUS + 5;
+        const isOnGround = distToFloor <= this.currentBeaverRadius + 5;
 
         if (isOnGround) {
             this.ballBody.rigidBody.setLinearDamping(1.5);
@@ -630,6 +953,46 @@ class MainScene extends Phaser.Scene {
                 }
             }
         }
+    }
+
+    private checkLevelCompletion() {
+        if (this.levelComplete || !this.floorBody) return;
+        let total = 0;
+        let down = 0;
+
+        for (const target of this.towerTargets) {
+            const balls = target.tower.ballBodies ?? [];
+            for (const ball of balls) {
+                total += 1;
+                if (!ball.isDown && this.isTowerBallDown(target, ball)) {
+                    ball.isDown = true;
+                }
+                if (ball.isDown) down += 1;
+            }
+        }
+
+        const changed = total !== this.towerBallTotal || down !== this.towerBallDown;
+        this.towerBallTotal = total;
+        this.towerBallDown = down;
+        if (changed) this.updateUI();
+
+        if (total > 0 && down === total) {
+            this.completeLevel();
+        }
+    }
+
+    private isTowerBallDown(target: TowerTarget, ball: TowerBall) {
+        const centerY = ball.body.rigidBody.translation().y;
+        const distToFloor = FLOOR_Y - centerY;
+        const nearFloor = distToFloor <= ball.radius + 2;
+        const belowPlatform = centerY >= target.platformSurfaceY + PLATFORM_HEIGHT;
+
+        let hitFloor = false;
+        this.rapier.getWorld().contactPair(ball.body.collider, this.floorBody.collider, () => {
+            hitFloor = true;
+        });
+
+        return hitFloor || nearFloor || belowPlatform;
     }
 
     private checkTowerCrashSounds(timeMs: number) {
@@ -750,7 +1113,7 @@ class MainScene extends Phaser.Scene {
                 if (!ball.hasHitFloor) {
                     const centerY = ball.body.rigidBody.translation().y;
                     const distToFloor = FLOOR_Y - centerY;
-                    const nearFloor = distToFloor <= ball.radius + BALL_GROUND_SLOP;
+                    const nearFloor = distToFloor <= ball.radius + 2;
                     let hitFloor = nearFloor;
 
                     if (!hitFloor) {
@@ -801,10 +1164,17 @@ class MainScene extends Phaser.Scene {
     }
 
     private handleInput() {
+        if (this.levelComplete) {
+            if (Phaser.Input.Keyboard.JustDown(this.resetKey)) {
+                this.restartLevel();
+            }
+            return;
+        }
+
         // Reset (after launch)
         if (this.hasLaunched) {
             if (Phaser.Input.Keyboard.JustDown(this.resetKey)) {
-                this.scene.restart();
+                this.restartLevel();
             }
             return;
         }
@@ -828,7 +1198,7 @@ class MainScene extends Phaser.Scene {
 
         // Clamp
         this.aimAngle = Phaser.Math.Clamp(this.aimAngle, AIM_ANGLE_MIN_DEG, AIM_ANGLE_MAX_DEG);
-        this.aimPower = Phaser.Math.Clamp(this.aimPower, AIM_POWER_MIN, AIM_POWER_MAX);
+        this.aimPower = Phaser.Math.Clamp(this.aimPower, AIM_POWER_MIN, this.maxAimPower);
 
         if (this.aimAngle !== prevAngle || this.aimPower !== prevPower) this.updateUI();
 
@@ -856,6 +1226,7 @@ class MainScene extends Phaser.Scene {
     }
 
     private checkBallAutoReset(timeMs: number) {
+        if (this.levelComplete) return;
         if (!this.hasLaunched) {
             this.ballStoppedAtMs = null;
             return;
@@ -876,6 +1247,39 @@ class MainScene extends Phaser.Scene {
         if (timeMs - this.ballStoppedAtMs >= BALL_RESET_DELAY_MS) {
             this.resetBallToCatapult();
         }
+    }
+
+    private completeLevel() {
+        this.levelComplete = true;
+        const isLastLevel = this.levelIndex >= LEVELS.length - 1;
+        this.feedbackText.setText(
+            isLastLevel ? 'All levels cleared! Press Enter for settings.' : 'Level cleared! Press Enter for next level.'
+        );
+        this.catapultQuestionText.setText('');
+        if (this.upgradeTitleText) this.upgradeTitleText.setVisible(false);
+        if (this.upgradeQuestionTexts) {
+            this.upgradeQuestionTexts.size.setVisible(false);
+            this.upgradeQuestionTexts.density.setVisible(false);
+            this.upgradeQuestionTexts.power.setVisible(false);
+        }
+        this.answerInputValue = '';
+        this.updateAnswerText();
+    }
+
+    private advanceLevel() {
+        if (!this.levelComplete) return;
+        const isLastLevel = this.levelIndex >= LEVELS.length - 1;
+        if (isLastLevel) {
+            this.scene.start('SettingsScene');
+            return;
+        }
+        const nextLevel = this.levelIndex + 1;
+        gameState.levelIndex = nextLevel;
+        this.scene.restart({ levelIndex: nextLevel });
+    }
+
+    private restartLevel() {
+        this.scene.restart({ levelIndex: this.levelIndex });
     }
 
     private resetBallToCatapult() {
@@ -900,9 +1304,11 @@ class MainScene extends Phaser.Scene {
         if (this.hasLaunched) {
             this.statsText.setText('PRESS R TO RESET');
         } else {
-            this.statsText.setText(`ANGLE: ${Math.abs(this.aimAngle)}°\nPOWER: ${this.aimPower}`);
+            this.statsText.setText(`ANGLE: ${Math.abs(this.aimAngle)}°\nPOWER: ${this.aimPower}/${Math.round(this.maxAimPower)}`);
         }
-        this.scoreText.setText(`SCORE: ${this.score}`);
+        const progress = this.towerBallTotal > 0 ? `${this.towerBallDown}/${this.towerBallTotal}` : '0/0';
+        this.scoreText.setText(`BALLS DOWN: ${progress}\nSCORE: ${this.score}`);
+        this.levelText.setText(`LEVEL ${this.levelIndex + 1}/${LEVELS.length}: ${this.levelConfig.name}`);
     }
 
     private drawAimArrow() {
@@ -915,7 +1321,11 @@ class MainScene extends Phaser.Scene {
         const rads = Phaser.Math.DegToRad(this.aimAngle);
 
         // Map power to pixel length.
-        const powerT = Phaser.Math.Clamp((this.aimPower - AIM_POWER_MIN) / (AIM_POWER_MAX - AIM_POWER_MIN), 0, 1);
+        const powerT = Phaser.Math.Clamp(
+            (this.aimPower - AIM_POWER_MIN) / (this.maxAimPower - AIM_POWER_MIN),
+            0,
+            1
+        );
         const arrowLength = Phaser.Math.Linear(50, 400, powerT);
 
         const endX = startX + arrowLength * Math.cos(rads);
@@ -1095,7 +1505,7 @@ const config: Phaser.Types.Core.GameConfig = {
     parent: 'app',
     backgroundColor: '#87CEEB',
     physics: { default: 'arcade', arcade: { debug: false } }, // Dummy for types, we use Rapier
-    scene: [MainScene]
+    scene: [SettingsScene, MainScene]
 };
 
 new Phaser.Game(config);

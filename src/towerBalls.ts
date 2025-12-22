@@ -20,6 +20,7 @@ export type TowerBall = {
     mood: BallMood;
     hasBeenHit: boolean;
     hasHitFloor: boolean;
+    isDown: boolean;
 };
 
 export type BallContext = {
@@ -119,7 +120,8 @@ export function createBall(
         person,
         mood,
         hasBeenHit: false,
-        hasHitFloor: false
+        hasHitFloor: false,
+        isDown: false
     } satisfies TowerBall;
 }
 
