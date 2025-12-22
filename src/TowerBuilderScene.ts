@@ -80,6 +80,11 @@ export class TowerBuilderScene extends Phaser.Scene {
     private cursorGhost?: Phaser.GameObjects.Container | Phaser.GameObjects.Image;
     private platformCenterX = 0;
     private surfaceY = 0;
+    private dpr = 1;
+    private viewWidth = 0;
+    private viewHeight = 0;
+    private platformRect?: Phaser.GameObjects.Rectangle;
+    private platformBody?: RapierBody;
     private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
     private rotateKey!: Phaser.Input.Keyboard.Key;
     private placeKey!: Phaser.Input.Keyboard.Key;
@@ -91,6 +96,12 @@ export class TowerBuilderScene extends Phaser.Scene {
     private repeatStates: Record<string, RepeatState> = {};
     private objectButtons: Record<BuilderObjectType, ObjectButton> = {} as Record<BuilderObjectType, ObjectButton>;
     private loadInput?: HTMLInputElement;
+    private objectSelector?: Phaser.GameObjects.Container;
+    private downloadButton?: Phaser.GameObjects.Text;
+    private loadButton?: Phaser.GameObjects.Text;
+    private handleResize = () => {
+        this.applyHiDpiAndLayout();
+    };
 
     private trackObject: (obj: Trackable, includeInBounds?: boolean) => void = () => {};
 
@@ -105,16 +116,14 @@ export class TowerBuilderScene extends Phaser.Scene {
     }
 
     create() {
-        const { dpr } = applyHiDpi(this.scale);
         this.rapier = createConfiguredRapier(this, true);
         assertWorldConfigured(this.rapier.getWorld());
 
-        const camera = this.cameras.main;
-        camera.setZoom(dpr);
-        const viewWidth = camera.width / camera.zoom;
-        const viewHeight = camera.height / camera.zoom;
-        this.platformCenterX = viewWidth / 2;
-        this.surfaceY = viewHeight * 0.7;
+        this.applyHiDpiAndLayout();
+        window.addEventListener('resize', this.handleResize);
+        this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+            window.removeEventListener('resize', this.handleResize);
+        });
 
         this.createPlatform();
 
@@ -172,7 +181,7 @@ export class TowerBuilderScene extends Phaser.Scene {
         this.createObjectSelector();
 
         const downloadButton = this.add
-            .text(viewWidth - 20, 20, 'Download JSON', {
+            .text(this.viewWidth - 20, 20, 'Download JSON', {
                 fontSize: '18px',
                 color: '#ffffff',
                 backgroundColor: '#000000aa',
@@ -199,6 +208,8 @@ export class TowerBuilderScene extends Phaser.Scene {
 
         loadButton.setPosition(downloadButton.x - downloadButton.width - 12, 20);
         loadButton.on('pointerdown', () => this.promptLoadJson());
+        this.downloadButton = downloadButton;
+        this.loadButton = loadButton;
 
         this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
             this.loadInput?.remove();
@@ -249,15 +260,16 @@ export class TowerBuilderScene extends Phaser.Scene {
             0x555555
         );
 
-        this.rapier.addRigidBody(platform, {
+        const body = this.rapier.addRigidBody(platform, {
             rigidBodyType: RAPIER.RigidBodyType.Fixed,
             collider: RAPIER.ColliderDesc.cuboid(PLATFORM_WIDTH / 2, PLATFORM_HEIGHT / 2)
         });
+        this.platformRect = platform;
+        this.platformBody = body;
     }
 
     private createObjectSelector() {
-        const camera = this.cameras.main;
-        const ui = this.add.container(viewWidth / 2, viewHeight - 40).setScrollFactor(0).setDepth(1000);
+        const ui = this.add.container(this.viewWidth / 2, this.viewHeight - 40).setScrollFactor(0).setDepth(1000);
 
         const label = this.add
             .text(0, -18, 'Object', {
@@ -308,6 +320,7 @@ export class TowerBuilderScene extends Phaser.Scene {
         };
 
         this.updateObjectSelectorVisuals();
+        this.objectSelector = ui;
     }
 
     private createObjectButton(
@@ -391,6 +404,50 @@ export class TowerBuilderScene extends Phaser.Scene {
         const spec = this.getActiveCursorSpec();
         const { x, y } = this.getCursorPosition(spec);
         this.cursorGhost.setPosition(x, y);
+    }
+
+    private applyHiDpiAndLayout() {
+        this.dpr = applyHiDpi(this.scale).dpr;
+        const camera = this.cameras.main;
+        camera.setZoom(this.dpr);
+        this.viewWidth = camera.width / this.dpr;
+        this.viewHeight = camera.height / this.dpr;
+
+        if (this.mode === 'PAUSED') {
+            this.platformCenterX = this.viewWidth / 2;
+            this.surfaceY = this.viewHeight * 0.7;
+
+            if (this.platformRect && this.platformBody) {
+                const platformY = this.surfaceY + PLATFORM_HEIGHT / 2;
+                this.platformRect.setPosition(this.platformCenterX, platformY);
+                this.platformBody.rigidBody.setTranslation({ x: this.platformCenterX, y: platformY }, true);
+            }
+
+            this.updatePlacedObjectPositions();
+            this.syncGhostPosition();
+        }
+
+        if (this.objectSelector) {
+            this.objectSelector.setPosition(this.viewWidth / 2, this.viewHeight - 40);
+        }
+
+        if (this.downloadButton) {
+            this.downloadButton.setPosition(this.viewWidth - 20, 20);
+        }
+
+        if (this.loadButton && this.downloadButton) {
+            this.loadButton.setPosition(this.downloadButton.x - this.downloadButton.width - 12, 20);
+        }
+
+    }
+
+    private updatePlacedObjectPositions() {
+        for (const entry of this.placed) {
+            const x = this.platformCenterX + entry.spec.dx;
+            const y = this.surfaceY + entry.spec.dy;
+            entry.container.setPosition(x, y);
+            entry.body.rigidBody.setTranslation({ x, y }, true);
+        }
     }
 
     private gridSnap(value: number) {

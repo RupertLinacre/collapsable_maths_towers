@@ -93,7 +93,7 @@ class MainScene extends Phaser.Scene {
     private answerInputValue = '';
     private catapultProblem?: MathProblem;
     private ballStoppedAtMs: number | null = null;
-    private renderScale = 1;
+    private dpr = 1;
 
     // UI
     private aimGraphics!: Phaser.GameObjects.Graphics;
@@ -110,7 +110,7 @@ class MainScene extends Phaser.Scene {
     private lastCrashSoundAtMs = 0;
     private lastOwSoundAtMs = 0;
     private handleResize = () => {
-        this.renderScale = applyHiDpi(this.scale).dpr;
+        this.dpr = applyHiDpi(this.scale).dpr;
         this.updateAnswerLayout();
     };
 
@@ -161,7 +161,7 @@ class MainScene extends Phaser.Scene {
     }
 
     create() {
-        this.renderScale = applyHiDpi(this.scale).dpr;
+        this.dpr = applyHiDpi(this.scale).dpr;
         window.addEventListener('resize', this.handleResize);
         this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
             window.removeEventListener('resize', this.handleResize);
@@ -980,8 +980,8 @@ class MainScene extends Phaser.Scene {
 
     private getCameraTarget(padding = 250, minZoom = 0.15, maxZoom = 1.0) {
         const camera = this.cameras.main;
-        const viewWidth = camera.width / this.renderScale;
-        const viewHeight = camera.height / this.renderScale;
+        const viewWidth = camera.width / this.dpr;
+        const viewHeight = camera.height / this.dpr;
         const tracked: Trackable[] = [];
 
         for (const t of this.trackedObjects) {
@@ -1019,7 +1019,7 @@ class MainScene extends Phaser.Scene {
         const zoomFloor = backgroundMinZoom ? Math.max(minZoom, backgroundMinZoom) : minZoom;
 
         const zoom = Phaser.Math.Clamp(Math.min(viewWidth / paddedWidth, viewHeight / requiredHeight), zoomFloor, maxZoom);
-        const scaledZoom = zoom * this.renderScale;
+        const scaledZoom = zoom * this.dpr;
 
         const centerX = (minX + maxX) / 2;
         const centerY = this.getPinnedCenterY(scaledZoom);
@@ -1037,8 +1037,8 @@ class MainScene extends Phaser.Scene {
         if (!bounds) return null;
 
         const camera = this.cameras.main;
-        const viewWidth = camera.width / this.renderScale;
-        const viewHeight = camera.height / this.renderScale;
+        const viewWidth = camera.width / this.dpr;
+        const viewHeight = camera.height / this.dpr;
         return Math.max(viewWidth / bounds.width, viewHeight / bounds.height);
     }
 
@@ -1094,11 +1094,6 @@ const config: Phaser.Types.Core.GameConfig = {
     height: window.innerHeight,
     parent: 'app',
     backgroundColor: '#87CEEB',
-    render: {
-        mipmapFilter: 'LINEAR_MIPMAP_LINEAR',
-        pixelArt: false,
-        antialias: true
-    },
     physics: { default: 'arcade', arcade: { debug: false } }, // Dummy for types, we use Rapier
     scene: [MainScene]
 };
