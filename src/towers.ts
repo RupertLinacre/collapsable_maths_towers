@@ -2,7 +2,7 @@ import type Phaser from 'phaser';
 import { RAPIER } from './physics';
 import type { RapierBody, RapierPhysics } from './physics';
 import { createPlank, type PlankVisuals, type Trackable } from './towerPlanks';
-import { createBall } from './towerBalls';
+import { createBall, type TowerBall } from './towerBalls';
 
 export type { Trackable } from './towerPlanks';
 
@@ -21,7 +21,7 @@ export interface TowerSpawnContext {
 export interface TowerInstance {
     objects: Trackable[];
     bodies: RapierBody[];
-    ballBodies?: Array<{ body: RapierBody; radius: number }>;
+    ballBodies?: TowerBall[];
 
     enableDynamics?: () => void; // e.g. Fixed → Dynamic on launch
     setFrozenVisual?: (frozen: boolean) => void;
@@ -75,11 +75,11 @@ function buildTowerDefinition(spec: TowerSpecFile): TowerDefinition {
             const objects: Trackable[] = [];
             const bodies: RapierBody[] = [];
             const visuals: PlankVisuals[] = [];
-            const ballBodies: Array<{ body: RapierBody; radius: number }> = [];
+            const ballBodies: TowerBall[] = [];
 
             for (const part of spec.parts) {
                 if (part.type === 'ball') {
-                    const { body } = createBall(
+                    const ball = createBall(
                         ctx,
                         objects,
                         bodies,
@@ -87,7 +87,7 @@ function buildTowerDefinition(spec: TowerSpecFile): TowerDefinition {
                         ctx.surfaceY + part.dy,
                         part.r
                     );
-                    ballBodies.push({ body, radius: part.r });
+                    ballBodies.push(ball);
                     continue;
                 }
 

@@ -3,12 +3,11 @@ import { RAPIER } from './physics';
 import type { RapierBody, RapierPhysics } from './physics';
 import { BEAVER_RADIUS, DEBUG_RAPIER, PLANK_LENGTH, PLANK_WIDTH, PLATFORM_HEIGHT, PLATFORM_WIDTH } from './config';
 import { createPlank, createPlankGhost, type PlankVisuals, type Trackable } from './towerPlanks';
-import { createBall, createBallGhost } from './towerBalls';
+import { BALL_PREVIEW_TEXTURE_KEY, createBall, createBallGhost, preloadTowerBallTextures } from './towerBalls';
 import { assertWorldConfigured, createConfiguredRapier } from './physicsSettings';
 import { applyHiDpi } from './hiDpi';
 import logUrl from './assets/images/tower_objects/log.png?as=url';
 import logFrozenUrl from './assets/images/tower_objects/log_frozen.png?as=url';
-import ballHappyUrl from './assets/images/balls/dad/ball_happy.png?as=url';
 
 type BuildMode = 'PAUSED' | 'RUNNING';
 
@@ -102,7 +101,7 @@ export class TowerBuilderScene extends Phaser.Scene {
     preload() {
         this.load.image('log1', logUrl);
         this.load.image('log_frozen', logFrozenUrl);
-        this.load.image('ball_happy', ballHappyUrl);
+        preloadTowerBallTextures(this);
     }
 
     create() {
@@ -293,7 +292,7 @@ export class TowerBuilderScene extends Phaser.Scene {
             rightX,
             12,
             'ball',
-            'ball_happy',
+            BALL_PREVIEW_TEXTURE_KEY,
             'Ball',
             buttonW,
             buttonH,

@@ -35,7 +35,7 @@ export const PLANK_LENGTH = 120; // long side (equal for all planks)
 export const PLANK_DENSITY = 4.0;
 
 // --- Background ---
-export const BACKGROUND_SCALE = 3.0;
+export const BACKGROUND_SCALE = 4.0;
 export const BACKGROUND_ANCHOR_X = 100;
 export const BACKGROUND_ANCHOR_Y = 1000;
 

@@ -25,6 +25,7 @@ import {
     MATH_YEAR_LEVEL,
     PERFECT_SHOT_ANGLE_DEG,
     PERFECT_SHOT_POWER,
+    PLANK_WIDTH,
     PLATFORM_HEIGHT,
     PLATFORM_PARABOLA_Y_OFFSET,
     PLATFORM_WIDTH,
@@ -35,7 +36,7 @@ import logUrl from './assets/images/tower_objects/log.png?as=url';
 import logFrozenUrl from './assets/images/tower_objects/log_frozen.png?as=url';
 import beaverUrl from './assets/images/balls/beaver/beaver.png?as=url';
 import backgroundUrl from './assets/images/backgrounds/background.png?as=url';
-import ballHappyUrl from './assets/images/balls/dad/ball_happy.png?as=url';
+import { preloadTowerBallTextures, setBallMood, type TowerBall } from './towerBalls';
 
 // Phaser does not await an async Scene.create(), so Rapier must be initialized
 // before the game boots (otherwise update() runs with uninitialized state).
@@ -50,6 +51,8 @@ const CRASH_SOUND_COOLDOWN_MS = 180;
 const CRASH_SOUND_MIN_RELATIVE_SPEED = 60;
 const OW_SOUND_COOLDOWN_MS = 500;
 const OW_SOUND_MIN_RELATIVE_SPEED = 80;
+const BALL_HIT_MIN_RELATIVE_SPEED = 40;
+const BALL_GROUND_SLOP = PLANK_WIDTH / 2;
 
 type TowerTarget = {
     tower: TowerInstance;
@@ -145,7 +148,7 @@ class MainScene extends Phaser.Scene {
         this.load.image('log_frozen', logFrozenUrl);
         this.load.image('beaver', beaverUrl);
         this.load.image('background', backgroundUrl);
-        this.load.image('ball_happy', ballHappyUrl);
+        preloadTowerBallTextures(this);
         this.load.audio('splash1', new URL('./assets/sound_effects/splashing_sounds/1.mp3', import.meta.url).toString());
         this.load.audio('splash2', new URL('./assets/sound_effects/splashing_sounds/2.mp3', import.meta.url).toString());
         this.load.audio('splash3', new URL('./assets/sound_effects/splashing_sounds/3.mp3', import.meta.url).toString());
@@ -534,6 +537,7 @@ class MainScene extends Phaser.Scene {
         this.checkTowerActivations();
         this.checkTowerCrashSounds(time);
         this.checkDadBallKnockSound(time);
+        this.updateTowerBallEmotions();
         this.checkTowerGroundHits();
         this.checkBallAutoReset(time);
         this.drawDebugBounds();
@@ -673,20 +677,20 @@ class MainScene extends Phaser.Scene {
 
         const world = this.rapier.getWorld();
         const allBodies: RapierBody[] = [this.ballBody];
-        const dadBallBodies: Array<{ body: RapierBody; radius: number }> = [];
+        const towerBallBodies: TowerBall[] = [];
 
         for (const target of this.towerTargets) {
             if (target.state !== 'dynamic') continue;
             allBodies.push(...target.tower.bodies);
             if (target.tower.ballBodies?.length) {
-                dadBallBodies.push(...target.tower.ballBodies);
+                towerBallBodies.push(...target.tower.ballBodies);
             }
         }
 
-        if (!dadBallBodies.length) return;
+        if (!towerBallBodies.length) return;
 
-        for (const dadBall of dadBallBodies) {
-            const dadBody = dadBall.body;
+        for (const towerBall of towerBallBodies) {
+            const dadBody = towerBall.body;
             const dadVel = dadBody.rigidBody.linvel();
             for (const body of allBodies) {
                 if (body === dadBody) continue;
@@ -722,6 +726,65 @@ class MainScene extends Phaser.Scene {
                 } else {
                     ball.body.rigidBody.setLinearDamping(0);
                     ball.body.rigidBody.setAngularDamping(0);
+                }
+            }
+        }
+    }
+
+    private updateTowerBallEmotions() {
+        if (!this.floorBody) return;
+        const world = this.rapier.getWorld();
+
+        const impactBodies: RapierBody[] = [];
+        if (this.ballBody) impactBodies.push(this.ballBody);
+
+        for (const target of this.towerTargets) {
+            if (target.state !== 'dynamic') continue;
+            impactBodies.push(...target.tower.bodies);
+        }
+
+        for (const target of this.towerTargets) {
+            if (target.state !== 'dynamic') continue;
+            const ballBodies = target.tower.ballBodies ?? [];
+            for (const ball of ballBodies) {
+                if (!ball.hasHitFloor) {
+                    const centerY = ball.body.rigidBody.translation().y;
+                    const distToFloor = FLOOR_Y - centerY;
+                    const nearFloor = distToFloor <= ball.radius + BALL_GROUND_SLOP;
+                    let hitFloor = nearFloor;
+
+                    if (!hitFloor) {
+                        world.contactPair(ball.body.collider, this.floorBody.collider, () => {
+                            hitFloor = true;
+                        });
+                    }
+
+                    if (hitFloor) {
+                        ball.hasHitFloor = true;
+                        ball.hasBeenHit = true;
+                        setBallMood(ball, 'angry');
+                        continue;
+                    }
+                }
+
+                if (ball.hasBeenHit) continue;
+                const ballVel = ball.body.rigidBody.linvel();
+
+                for (const body of impactBodies) {
+                    if (body === ball.body) continue;
+                    let hit = false;
+                    world.contactPair(ball.body.collider, body.collider, () => {
+                        hit = true;
+                    });
+                    if (!hit) continue;
+
+                    const bodyVel = body.rigidBody.linvel();
+                    const relativeSpeed = Math.hypot(ballVel.x - bodyVel.x, ballVel.y - bodyVel.y);
+                    if (relativeSpeed < BALL_HIT_MIN_RELATIVE_SPEED) continue;
+
+                    ball.hasBeenHit = true;
+                    setBallMood(ball, 'surprised');
+                    break;
                 }
             }
         }
