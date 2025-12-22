@@ -582,7 +582,7 @@ class MainScene extends Phaser.Scene {
             .setDepth(1001);
 
         this.answerHintText = this.add
-            .text(panelLeft, y - 44, 'Type answer + Enter', {
+            .text(panelLeft, y + boxHeight / 2 + 6, 'Type answer + Enter', {
                 fontSize: '20px',
                 color: PANEL_TEXT_COLOR,
                 backgroundColor: PANEL_BG_COLOR,
@@ -610,7 +610,7 @@ class MainScene extends Phaser.Scene {
         this.answerBox.setSize(ANSWER_BOX_WIDTH, ANSWER_BOX_HEIGHT);
         this.answerBox.setPosition(panelCenterX, answerCenterY);
         this.answerText.setPosition(panelCenterX, answerCenterY);
-        const hintY = answerTop - this.answerHintText.height - 6;
+        const hintY = answerCenterY + ANSWER_BOX_HEIGHT / 2 + 30;
         this.answerHintText.setPosition(panelLeft, hintY);
     }
 
@@ -673,14 +673,14 @@ class MainScene extends Phaser.Scene {
             category === 'size'
                 ? this.upgradeState.sizeLevel + 1
                 : category === 'density'
-                  ? this.upgradeState.densityLevel + 1
-                  : this.upgradeState.powerLevel + 1;
+                    ? this.upgradeState.densityLevel + 1
+                    : this.upgradeState.powerLevel + 1;
         const max =
             category === 'size'
                 ? BEAVER_RADIUS_LEVELS.length
                 : category === 'density'
-                  ? BEAVER_DENSITY_LEVELS.length
-                  : BEAVER_POWER_LEVELS.length;
+                    ? BEAVER_DENSITY_LEVELS.length
+                    : BEAVER_POWER_LEVELS.length;
         return `${label} ${level}/${max}`;
     }
 

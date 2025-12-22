@@ -4,7 +4,7 @@ export const LEVEL_PLATFORM_COUNT: number = 2
 export const LEVEL_PLATFORM_GAP_FRACTION: number = 0.5;
 
 // Vertical distance from the floor to the catapult/origin point.
-export const CATAPULT_HEIGHT_ABOVE_FLOOR = 200;
+export const CATAPULT_HEIGHT_ABOVE_FLOOR = 400;
 
 // "Perfect shot" controls the reference trajectory (platform layout) and the initial aim.
 // Increase power to make the parabola wider (platforms further away).
