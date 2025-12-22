@@ -12,6 +12,11 @@ const config: Phaser.Types.Core.GameConfig = {
     height: window.innerHeight,
     parent: 'app',
     backgroundColor: '#87CEEB',
+    render: {
+        mipmapFilter: 'LINEAR_MIPMAP_LINEAR',
+        pixelArt: false,
+        antialias: true
+    },
     physics: { default: 'arcade', arcade: { debug: false } },
     scene: [TowerBuilderScene]
 };

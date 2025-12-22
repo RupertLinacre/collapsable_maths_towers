@@ -5,6 +5,7 @@ import type { RapierPhysics, RapierBody } from './physics';
 import { TOWER_LIBRARY } from './towers';
 import type { Trackable, TowerInstance, TowerSpawnContext } from './towers';
 import { GRAVITY_Y, createConfiguredRapier } from './physicsSettings';
+import { applyHiDpi } from './hiDpi';
 import {
     AIM_ANGLE_MAX_DEG,
     AIM_ANGLE_MIN_DEG,
@@ -32,7 +33,7 @@ import {
 } from './config';
 import logUrl from './assets/images/tower_objects/log.png?as=url';
 import logFrozenUrl from './assets/images/tower_objects/log_frozen.png?as=url';
-import beaverUrl from './assets/images/beaver.png?as=url';
+import beaverUrl from './assets/images/balls/beaver/beaver.png?as=url';
 import backgroundUrl from './assets/images/backgrounds/background.png?as=url';
 import ballHappyUrl from './assets/images/balls/dad/ball_happy.png?as=url';
 
@@ -89,6 +90,7 @@ class MainScene extends Phaser.Scene {
     private answerInputValue = '';
     private catapultProblem?: MathProblem;
     private ballStoppedAtMs: number | null = null;
+    private renderScale = 1;
 
     // UI
     private aimGraphics!: Phaser.GameObjects.Graphics;
@@ -104,6 +106,10 @@ class MainScene extends Phaser.Scene {
     private crashSoundKeys = ['crash1', 'crash2', 'crash3', 'crash4'];
     private lastCrashSoundAtMs = 0;
     private lastOwSoundAtMs = 0;
+    private handleResize = () => {
+        this.renderScale = applyHiDpi(this.scale).dpr;
+        this.updateAnswerLayout();
+    };
 
     init() {
         // Reset core state on every restart (Scene is reused)
@@ -152,6 +158,12 @@ class MainScene extends Phaser.Scene {
     }
 
     create() {
+        this.renderScale = applyHiDpi(this.scale).dpr;
+        window.addEventListener('resize', this.handleResize);
+        this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+            window.removeEventListener('resize', this.handleResize);
+        });
+
         // 1. Init Physics
         this.rapier = createConfiguredRapier(this, DEBUG_RAPIER);
 
@@ -195,10 +207,10 @@ class MainScene extends Phaser.Scene {
                 Math.min(this.catapultAnchor.y + QUESTION_TEXT_OFFSET_Y, FLOOR_Y - 80),
                 '',
                 {
-                fontSize: '32px',
-                color: '#1b1b1b',
-                backgroundColor: '#fff7c7',
-                padding: { x: 12, y: 8 }
+                    fontSize: '32px',
+                    color: '#1b1b1b',
+                    backgroundColor: '#fff7c7',
+                    padding: { x: 12, y: 8 }
                 }
             )
             .setOrigin(0.5, 0)
@@ -396,7 +408,34 @@ class MainScene extends Phaser.Scene {
             .setScrollFactor(0)
             .setDepth(1001);
 
+        this.updateAnswerLayout();
         this.updateAnswerText();
+    }
+
+    private updateAnswerLayout() {
+        if (!this.answerBox || !this.answerText || !this.answerHintText) return;
+        const camera = this.cameras.main;
+        const viewWidth = camera.width / camera.zoom;
+        const viewHeight = camera.height / camera.zoom;
+        const x = viewWidth / 2;
+        const y = viewHeight - 60;
+        this.answerBox.setPosition(x, y);
+        this.answerText.setPosition(x, y);
+        this.answerHintText.setPosition(x, y - 44);
+    }
+
+    private updateHudLayout() {
+        if (!this.statsText || !this.scoreText || !this.feedbackText) return;
+        const camera = this.cameras.main;
+        const viewWidth = camera.width / camera.zoom;
+        const viewHeight = camera.height / camera.zoom;
+        const boxWidth = this.answerBox?.width ?? 320;
+        const x = viewWidth / 2 - boxWidth / 2;
+        const baseY = viewHeight - 300;
+        this.statsText.setOrigin(0, 0).setPosition(x, baseY);
+        this.scoreText.setOrigin(0, 0).setPosition(x, baseY + 70);
+        this.feedbackText.setOrigin(0, 0).setPosition(x, baseY + 130);
+        this.updateAnswerLayout();
     }
 
     private updateAnswerText() {
@@ -488,6 +527,7 @@ class MainScene extends Phaser.Scene {
     update(time: number, delta: number) {
         this.handleInput();
         this.updateCamera(delta);
+        this.updateHudLayout();
         this.drawAimArrow();
         this.applyRollingResistance();
         this.applyDadBallRollingResistance();
@@ -877,6 +917,8 @@ class MainScene extends Phaser.Scene {
 
     private getCameraTarget(padding = 250, minZoom = 0.15, maxZoom = 1.0) {
         const camera = this.cameras.main;
+        const viewWidth = camera.width / this.renderScale;
+        const viewHeight = camera.height / this.renderScale;
         const tracked: Trackable[] = [];
 
         for (const t of this.trackedObjects) {
@@ -913,16 +955,13 @@ class MainScene extends Phaser.Scene {
         const backgroundMinZoom = this.getBackgroundMinZoom();
         const zoomFloor = backgroundMinZoom ? Math.max(minZoom, backgroundMinZoom) : minZoom;
 
-        const zoom = Phaser.Math.Clamp(
-            Math.min(camera.width / paddedWidth, camera.height / requiredHeight),
-            zoomFloor,
-            maxZoom
-        );
+        const zoom = Phaser.Math.Clamp(Math.min(viewWidth / paddedWidth, viewHeight / requiredHeight), zoomFloor, maxZoom);
+        const scaledZoom = zoom * this.renderScale;
 
         const centerX = (minX + maxX) / 2;
-        const centerY = this.getPinnedCenterY(zoom);
+        const centerY = this.getPinnedCenterY(scaledZoom);
 
-        return { x: centerX, y: centerY, zoom };
+        return { x: centerX, y: centerY, zoom: scaledZoom };
     }
 
     private getPinnedCenterY(zoom: number) {
@@ -935,7 +974,9 @@ class MainScene extends Phaser.Scene {
         if (!bounds) return null;
 
         const camera = this.cameras.main;
-        return Math.max(camera.width / bounds.width, camera.height / bounds.height);
+        const viewWidth = camera.width / this.renderScale;
+        const viewHeight = camera.height / this.renderScale;
+        return Math.max(viewWidth / bounds.width, viewHeight / bounds.height);
     }
 
     private clampCameraCenterToBackground(x: number, y: number, zoom: number) {
@@ -990,6 +1031,11 @@ const config: Phaser.Types.Core.GameConfig = {
     height: window.innerHeight,
     parent: 'app',
     backgroundColor: '#87CEEB',
+    render: {
+        mipmapFilter: 'LINEAR_MIPMAP_LINEAR',
+        pixelArt: false,
+        antialias: true
+    },
     physics: { default: 'arcade', arcade: { debug: false } }, // Dummy for types, we use Rapier
     scene: [MainScene]
 };

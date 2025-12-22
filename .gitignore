@@ -1,3 +1,7 @@
+src/assets/original_images/*
+src/assets/old_images/*
+src/assets/images/bu/*
+
 # Logs
 logs
 *.log

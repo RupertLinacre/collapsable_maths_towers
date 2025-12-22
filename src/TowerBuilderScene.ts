@@ -5,6 +5,7 @@ import { BEAVER_RADIUS, DEBUG_RAPIER, PLANK_LENGTH, PLANK_WIDTH, PLATFORM_HEIGHT
 import { createPlank, createPlankGhost, type PlankVisuals, type Trackable } from './towerPlanks';
 import { createBall, createBallGhost } from './towerBalls';
 import { assertWorldConfigured, createConfiguredRapier } from './physicsSettings';
+import { applyHiDpi } from './hiDpi';
 import logUrl from './assets/images/tower_objects/log.png?as=url';
 import logFrozenUrl from './assets/images/tower_objects/log_frozen.png?as=url';
 import ballHappyUrl from './assets/images/balls/dad/ball_happy.png?as=url';
@@ -105,12 +106,16 @@ export class TowerBuilderScene extends Phaser.Scene {
     }
 
     create() {
+        const { dpr } = applyHiDpi(this.scale);
         this.rapier = createConfiguredRapier(this, true);
         assertWorldConfigured(this.rapier.getWorld());
 
         const camera = this.cameras.main;
-        this.platformCenterX = camera.width / 2;
-        this.surfaceY = camera.height * 0.7;
+        camera.setZoom(dpr);
+        const viewWidth = camera.width / camera.zoom;
+        const viewHeight = camera.height / camera.zoom;
+        this.platformCenterX = viewWidth / 2;
+        this.surfaceY = viewHeight * 0.7;
 
         this.createPlatform();
 
@@ -168,7 +173,7 @@ export class TowerBuilderScene extends Phaser.Scene {
         this.createObjectSelector();
 
         const downloadButton = this.add
-            .text(camera.width - 20, 20, 'Download JSON', {
+            .text(viewWidth - 20, 20, 'Download JSON', {
                 fontSize: '18px',
                 color: '#ffffff',
                 backgroundColor: '#000000aa',
@@ -253,7 +258,7 @@ export class TowerBuilderScene extends Phaser.Scene {
 
     private createObjectSelector() {
         const camera = this.cameras.main;
-        const ui = this.add.container(camera.width / 2, camera.height - 40).setScrollFactor(0).setDepth(1000);
+        const ui = this.add.container(viewWidth / 2, viewHeight - 40).setScrollFactor(0).setDepth(1000);
 
         const label = this.add
             .text(0, -18, 'Object', {
