@@ -141,6 +141,7 @@ class MainScene extends Phaser.Scene {
     private catapultQuestionText!: Phaser.GameObjects.Text;
     private upgradeTitleText!: Phaser.GameObjects.Text;
     private upgradeQuestionTexts!: Record<UpgradeCategory, Phaser.GameObjects.Text>;
+    private winText!: Phaser.GameObjects.Text;
     private answerBox!: Phaser.GameObjects.Rectangle;
     private answerText!: Phaser.GameObjects.Text;
     private answerHintText!: Phaser.GameObjects.Text;
@@ -265,6 +266,15 @@ class MainScene extends Phaser.Scene {
             padding: PANEL_PADDING
         }).setDepth(1000);
 
+        this.winText = this.add.text(0, 0, 'Level complete!\nPress Enter to proceed', {
+            fontSize: '36px',
+            color: '#ffffff',
+            backgroundColor: '#000000cc',
+            padding: { x: 18, y: 14 },
+            align: 'center'
+        });
+        this.winText.setOrigin(0.5, 0.5).setScrollFactor(0).setDepth(3000).setVisible(false);
+
         this.catapultQuestionText = this.add
             .text(
                 this.catapultAnchor.x + CATAPULT_PANEL_OFFSET_X,
@@ -300,6 +310,7 @@ class MainScene extends Phaser.Scene {
 
         this.updateTowerBallCounts();
         this.updateUI();
+        this.updateWinLayout();
     }
 
     private createBackground() {
@@ -655,6 +666,14 @@ class MainScene extends Phaser.Scene {
 
         this.updateUpgradeLayout();
         this.updateAnswerLayout();
+        this.updateWinLayout();
+    }
+
+    private updateWinLayout() {
+        if (!this.winText) return;
+        const viewWidth = this.scale.width;
+        const viewHeight = this.scale.height;
+        this.winText.setPosition(viewWidth / 2, viewHeight / 2);
     }
 
     private updateAnswerText() {
@@ -1354,6 +1373,7 @@ class MainScene extends Phaser.Scene {
         this.feedbackText.setText(
             isLastLevel ? 'All levels cleared! Press Enter for settings.' : 'Level cleared! Press Enter for next level.'
         );
+        this.winText.setVisible(true);
         this.catapultQuestionText.setText('');
         if (this.upgradeTitleText) this.upgradeTitleText.setVisible(false);
         if (this.upgradeQuestionTexts) {
