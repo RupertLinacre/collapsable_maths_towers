@@ -26,6 +26,7 @@ import {
     PLATFORM_HEIGHT,
     PLATFORM_PARABOLA_Y_OFFSET,
     PLATFORM_WIDTH,
+    TOWER_BALL_FLOOR_MARGIN,
     ANSWER_TEXT_OFFSET_Y
 } from './config';
 import logUrl from './assets/images/tower_objects/log.png?as=url';
@@ -46,12 +47,15 @@ await RAPIER.init();
 const FLOOR_Y = 800;
 const CAMERA_FLOOR_PADDING = 60; // Show a small slice of the ground
 const UNIVERSE_WIDTH = 200_000;
-const BALL_STOP_SPEED = 5;
+const BALL_STOP_SPEED = 0.01;
+const SIM_STOP_ANGULAR_SPEED = 0.00001;
 const CRASH_SOUND_COOLDOWN_MS = 180;
 const CRASH_SOUND_MIN_RELATIVE_SPEED = 60;
 const OW_SOUND_COOLDOWN_MS = 500;
 const OW_SOUND_MIN_RELATIVE_SPEED = 80;
 const BALL_HIT_MIN_RELATIVE_SPEED = 40;
+const TOWER_BALL_AIR_DAMPING = 0.5;
+const TOWER_BALL_AIR_ANGULAR_DAMPING = 0.5;
 const HUD_PANEL_GAP = 12;
 const UPGRADE_PANEL_OFFSET_X = -210;
 const UPGRADE_PANEL_OFFSET_Y = -260;
@@ -117,7 +121,7 @@ class MainScene extends Phaser.Scene {
         density: null,
         power: null
     };
-    private ballStoppedAtMs: number | null = null;
+    private simStoppedAtMs: number | null = null;
     private dpr = 1;
     private currentBeaverRadius = BEAVER_RADIUS_LEVELS[0];
     private currentBeaverDensity = BEAVER_DENSITY_LEVELS[0];
@@ -141,6 +145,7 @@ class MainScene extends Phaser.Scene {
     private answerText!: Phaser.GameObjects.Text;
     private answerHintText!: Phaser.GameObjects.Text;
     private debugGraphics?: Phaser.GameObjects.Graphics;
+    private physicsDebugGraphics?: Phaser.GameObjects.Graphics;
     private splashSoundKeys = ['splash1', 'splash2', 'splash3', 'splash4'];
     private crashSoundKeys = ['crash1', 'crash2', 'crash3', 'crash4'];
     private lastCrashSoundAtMs = 0;
@@ -166,7 +171,7 @@ class MainScene extends Phaser.Scene {
         this.answerInputValue = '';
         this.catapultProblem = undefined;
         this.upgradeProblems = { size: null, density: null, power: null };
-        this.ballStoppedAtMs = null;
+        this.simStoppedAtMs = null;
         this.levelComplete = false;
         this.towerBallTotal = 0;
         this.towerBallDown = 0;
@@ -215,7 +220,7 @@ class MainScene extends Phaser.Scene {
         });
 
         // 1. Init Physics
-        this.rapier = createConfiguredRapier(this, DEBUG_RAPIER);
+        this.rapier = createConfiguredRapier(this, false);
 
         // 2. Create World
         this.createInfiniteFloor();
@@ -288,6 +293,9 @@ class MainScene extends Phaser.Scene {
 
         if (DEBUG_BOUNDS) {
             this.debugGraphics = this.add.graphics().setDepth(2000);
+        }
+        if (DEBUG_RAPIER) {
+            this.physicsDebugGraphics = this.add.graphics().setDepth(2000);
         }
 
         this.updateTowerBallCounts();
@@ -862,8 +870,9 @@ class MainScene extends Phaser.Scene {
         this.updateTowerBallEmotions();
         this.checkTowerGroundHits();
         this.checkLevelCompletion();
-        this.checkBallAutoReset(time);
+        this.checkSimulationAutoReset(time);
         this.drawDebugBounds();
+        this.drawPhysicsDebug();
     }
 
     private drawDebugBounds() {
@@ -879,6 +888,24 @@ class MainScene extends Phaser.Scene {
         }
     }
 
+    private drawPhysicsDebug() {
+        if (!this.physicsDebugGraphics) return;
+        const graphics = this.physicsDebugGraphics;
+        const debug = this.rapier.getWorld().debugRender();
+        const vertices = debug.vertices;
+
+        graphics.clear();
+
+        const isIdle = this.simStoppedAtMs !== null && this.hasLaunched;
+        const color = isIdle ? 0xff4d4d : 0x39e68a;
+        const alpha = isIdle ? 0.9 : 0.75;
+        graphics.lineStyle(2, color, alpha);
+
+        for (let i = 0; i < vertices.length; i += 4) {
+            graphics.lineBetween(vertices[i], vertices[i + 1], vertices[i + 2], vertices[i + 3]);
+        }
+    }
+
     private applyRollingResistance() {
         if (!this.ballBody) return;
 
@@ -891,7 +918,7 @@ class MainScene extends Phaser.Scene {
             this.ballBody.rigidBody.setAngularDamping(1.5);
         } else {
             this.ballBody.rigidBody.setLinearDamping(0);
-            this.ballBody.rigidBody.setAngularDamping(0);
+            this.ballBody.rigidBody.setAngularDamping(0.5);
         }
     }
 
@@ -1087,8 +1114,8 @@ class MainScene extends Phaser.Scene {
                     ball.body.rigidBody.setLinearDamping(1.5);
                     ball.body.rigidBody.setAngularDamping(1.5);
                 } else {
-                    ball.body.rigidBody.setLinearDamping(0);
-                    ball.body.rigidBody.setAngularDamping(0);
+                    ball.body.rigidBody.setLinearDamping(TOWER_BALL_AIR_DAMPING);
+                    ball.body.rigidBody.setAngularDamping(TOWER_BALL_AIR_ANGULAR_DAMPING);
                 }
             }
         }
@@ -1113,7 +1140,7 @@ class MainScene extends Phaser.Scene {
                 if (!ball.hasHitFloor) {
                     const centerY = ball.body.rigidBody.translation().y;
                     const distToFloor = FLOOR_Y - centerY;
-                    const nearFloor = distToFloor <= ball.radius + 2;
+                    const nearFloor = distToFloor <= ball.radius + TOWER_BALL_FLOOR_MARGIN;
                     let hitFloor = nearFloor;
 
                     if (!hitFloor) {
@@ -1207,7 +1234,7 @@ class MainScene extends Phaser.Scene {
     private launch() {
         if (this.hasLaunched) return;
         this.hasLaunched = true;
-        this.ballStoppedAtMs = null;
+        this.simStoppedAtMs = null;
         this.catapultProblem = undefined;
         this.catapultQuestionText.setText('');
 
@@ -1225,26 +1252,98 @@ class MainScene extends Phaser.Scene {
         this.aimGraphics.clear();
     }
 
-    private checkBallAutoReset(timeMs: number) {
+    private checkSimulationAutoReset(timeMs: number) {
         if (this.levelComplete) return;
         if (!this.hasLaunched) {
-            this.ballStoppedAtMs = null;
+            this.simStoppedAtMs = null;
             return;
         }
 
-        const vel = this.ballBody.rigidBody.linvel();
-        const speed = Math.hypot(vel.x, vel.y);
-        if (speed > BALL_STOP_SPEED) {
-            this.ballStoppedAtMs = null;
+        const bodies: RapierBody[] = [this.ballBody];
+        for (const target of this.towerTargets) {
+            for (const body of target.tower.bodies) {
+                if (body.rigidBody.bodyType() !== RAPIER.RigidBodyType.Dynamic) continue;
+                bodies.push(body);
+            }
+        }
+
+        let isMoving = false;
+        let maxLin = 0;
+        let maxAng = 0;
+        let sleepingCount = 0;
+        const bodyStats: Array<{
+            id: number;
+            lin: number;
+            ang: number;
+            sleeping: boolean;
+            x: number;
+            y: number;
+        }> = [];
+        for (const body of bodies) {
+            const vel = body.rigidBody.linvel();
+            const speed = Math.hypot(vel.x, vel.y);
+            const angSpeed = Math.abs(body.rigidBody.angvel());
+            const sleeping = body.rigidBody.isSleeping();
+            const pos = body.rigidBody.translation();
+            maxLin = Math.max(maxLin, speed);
+            maxAng = Math.max(maxAng, angSpeed);
+            if (sleeping) sleepingCount += 1;
+            bodyStats.push({
+                id: body.collider.handle,
+                lin: speed,
+                ang: angSpeed,
+                sleeping,
+                x: pos.x,
+                y: pos.y
+            });
+            if (speed > BALL_STOP_SPEED || angSpeed > SIM_STOP_ANGULAR_SPEED) {
+                isMoving = true;
+                break;
+            }
+        }
+
+        if (isMoving) {
+            if (this.simStoppedAtMs !== null) {
+                console.log('[sim] movement resumed', {
+                    maxLin: maxLin.toFixed(2),
+                    maxAng: maxAng.toFixed(2),
+                    sleeping: sleepingCount,
+                    bodies: bodies.length
+                });
+            }
+            this.simStoppedAtMs = null;
             return;
         }
 
-        if (this.ballStoppedAtMs === null) {
-            this.ballStoppedAtMs = timeMs;
+        if (this.simStoppedAtMs === null) {
+            const slowBodies = [...bodyStats]
+                .sort((a, b) => Math.max(b.lin, b.ang) - Math.max(a.lin, a.ang))
+                .slice(0, 6)
+                .map((stat) => ({
+                    id: stat.id,
+                    lin: stat.lin.toFixed(2),
+                    ang: stat.ang.toFixed(2),
+                    sleeping: stat.sleeping,
+                    x: stat.x.toFixed(1),
+                    y: stat.y.toFixed(1)
+                }));
+            console.log('[sim] considered stopped', {
+                maxLin: maxLin.toFixed(2),
+                maxAng: maxAng.toFixed(2),
+                sleeping: sleepingCount,
+                bodies: bodies.length,
+                thresholds: { lin: BALL_STOP_SPEED, ang: SIM_STOP_ANGULAR_SPEED },
+                slowBodies
+            });
+            this.simStoppedAtMs = timeMs;
             return;
         }
 
-        if (timeMs - this.ballStoppedAtMs >= BALL_RESET_DELAY_MS) {
+        if (timeMs - this.simStoppedAtMs >= BALL_RESET_DELAY_MS) {
+            console.log('[sim] auto-reset after idle', {
+                idleMs: Math.round(timeMs - this.simStoppedAtMs),
+                resetDelayMs: BALL_RESET_DELAY_MS
+            });
             this.resetBallToCatapult();
         }
     }
@@ -1284,7 +1383,7 @@ class MainScene extends Phaser.Scene {
 
     private resetBallToCatapult() {
         this.hasLaunched = false;
-        this.ballStoppedAtMs = null;
+        this.simStoppedAtMs = null;
         this.ballBody.rigidBody.setLinvel({ x: 0, y: 0 }, true);
         this.ballBody.rigidBody.setAngvel(0, true);
         this.ballBody.rigidBody.setTranslation(

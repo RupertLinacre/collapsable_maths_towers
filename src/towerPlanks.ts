@@ -16,7 +16,7 @@ export type PlankVisuals = {
     frozen: Phaser.GameObjects.GameObject;
 };
 
-const PLANK_FRICTION = 0.7;
+const PLANK_FRICTION = 0.5;
 const PLANK_RESTITUTION = 0.05;
 const PLANK_TEXTURE_NORMAL = 'log1';
 const PLANK_TEXTURE_FROZEN = 'log_frozen';

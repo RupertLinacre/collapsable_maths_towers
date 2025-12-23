@@ -25,7 +25,7 @@ export const PLATFORM_HEIGHT = 10;
 export const PLATFORM_PARABOLA_Y_OFFSET = PLATFORM_WIDTH / 2;
 
 // --- Maths Challenge ---
-export const MATH_YEAR_LEVEL = 'year2';
+export const MATH_YEAR_LEVEL = 'year1';
 export const QUESTION_TEXT_OFFSET_Y = 140;
 export const ANSWER_TEXT_OFFSET_Y = 40;
 
@@ -47,11 +47,13 @@ export const BEAVER_RADIUS_LEVELS = [BEAVER_RADIUS, 60, 75];
 export const BEAVER_DENSITY_LEVELS = [BEAVER_DENSITY, 2, 5];
 export const BEAVER_POWER_LEVELS = [AIM_POWER_MAX, AIM_POWER_MAX + 2000, AIM_POWER_MAX + 4000];
 // Delay before returning the ball after it comes to rest.
-export const BALL_RESET_DELAY_MS = 3000;
+export const BALL_RESET_DELAY_MS = 100;
+// Extra height above the floor for tower balls to count as "hit the floor".
+export const TOWER_BALL_FLOOR_MARGIN = 40;
 
 // --- Debug ---
-export const DEBUG_RAPIER = false; // physics wireframes
-export const DEBUG_BOUNDS = false; // Phaser object AABBs
+export const DEBUG_RAPIER = true; // physics wireframes
+export const DEBUG_BOUNDS = true; // Phaser object AABBs
 
 // --- Physics ---
 export const GRAVITY_MULTIPLIER = 30;
