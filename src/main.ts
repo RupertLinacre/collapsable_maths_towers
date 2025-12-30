@@ -9,17 +9,14 @@ import { applyHiDpi } from './hiDpi';
 import {
     AIM_ANGLE_MAX_DEG,
     AIM_ANGLE_MIN_DEG,
-    AIM_POWER_MAX,
     AIM_POWER_MIN,
     BALL_RESET_DELAY_MS,
     CATAPULT_HEIGHT_ABOVE_FLOOR,
     BEAVER_DENSITY_LEVELS,
-    BEAVER_POWER_LEVELS,
     BEAVER_RADIUS_LEVELS,
     DEBUG_BOUNDS,
     DEBUG_RAPIER,
     PERFECT_SHOT_ANGLE_DEG,
-    PERFECT_SHOT_POWER,
     PLATFORM_HEIGHT,
     PLATFORM_PARABOLA_Y_OFFSET,
     PLATFORM_WIDTH,
@@ -76,7 +73,7 @@ type TowerTarget = {
 };
 
 type TowerState = 'frozen' | 'unfrozen' | 'dynamic';
-type UpgradeCategory = 'size' | 'density' | 'power';
+type UpgradeCategory = 'size' | 'density';
 
 class MainScene extends Phaser.Scene {
     private rapier!: RapierPhysics;
@@ -88,6 +85,7 @@ class MainScene extends Phaser.Scene {
     private beaverRing?: Phaser.GameObjects.Arc;
     private towerTargets: TowerTarget[] = [];
     private floorBody!: RapierBody;
+    private platforms: Phaser.GameObjects.Rectangle[] = [];
 
     private trackedObjects: { obj: Trackable; includeInBounds: boolean }[] = [];
     private catapultAnchor = { x: 0, y: 0 };
@@ -100,21 +98,21 @@ class MainScene extends Phaser.Scene {
     private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
     private resetKey!: Phaser.Input.Keyboard.Key;
     private aimAngle: number = PERFECT_SHOT_ANGLE_DEG;
-    private aimPower: number = PERFECT_SHOT_POWER;
-    private maxAimPower: number = AIM_POWER_MAX;
+    private aimPower: number = 750; // Will be set from levelConfig.perfectShotPower
+    private maxAimPower: number = 1500; // Will be 2x perfectShotPower
     private hasLaunched = false;
     private cameraSmoothing = 0.06; // Smoothing per 60fps frame (Phaser style)
     private score = 0;
     private scoredBodies = new Set<number>();
     private answerInputValue = '';
     private catapultProblem?: MathProblem;
-    private upgradeState: BeaverUpgradeState = { sizeLevel: 0, densityLevel: 0, powerLevel: 0 };
+    private upgradeState: BeaverUpgradeState = { sizeLevel: 0, densityLevel: 0 };
     private upgradeProblems: Record<UpgradeCategory, MathProblem | null> = {
         size: null,
-        density: null,
-        power: null
+        density: null
     };
     private simStoppedAtMs: number | null = null;
+    private launchTimeMs: number | null = null;
     private dpr = 1;
     private currentBeaverRadius = BEAVER_RADIUS_LEVELS[0];
     private currentBeaverDensity = BEAVER_DENSITY_LEVELS[0];
@@ -138,6 +136,7 @@ class MainScene extends Phaser.Scene {
     private answerBox!: Phaser.GameObjects.Rectangle;
     private answerText!: Phaser.GameObjects.Text;
     private answerHintText!: Phaser.GameObjects.Text;
+    private cheatButton!: Phaser.GameObjects.Text;
     private debugGraphics?: Phaser.GameObjects.Graphics;
     private physicsDebugGraphics?: Phaser.GameObjects.Graphics;
     private splashSoundKeys = ['splash1', 'splash2', 'splash3', 'splash4'];
@@ -159,13 +158,15 @@ class MainScene extends Phaser.Scene {
 
         this.hasLaunched = false;
         this.aimAngle = PERFECT_SHOT_ANGLE_DEG;
-        this.aimPower = PERFECT_SHOT_POWER;
+        this.aimPower = this.levelConfig.perfectShotPower;
+        this.maxAimPower = this.levelConfig.perfectShotPower * 2;
         this.score = 0;
         this.scoredBodies.clear();
         this.answerInputValue = '';
         this.catapultProblem = undefined;
-        this.upgradeProblems = { size: null, density: null, power: null };
+        this.upgradeProblems = { size: null, density: null };
         this.simStoppedAtMs = null;
+        this.launchTimeMs = null;
         this.levelComplete = false;
         this.towerBallTotal = 0;
         this.towerBallDown = 0;
@@ -173,6 +174,7 @@ class MainScene extends Phaser.Scene {
 
         this.towerTargets.length = 0;
         this.trackedObjects.length = 0;
+        this.platforms.length = 0;
     }
 
     constructor() {
@@ -223,6 +225,7 @@ class MainScene extends Phaser.Scene {
         // 3. Generate Level based on Math
         this.activeTowerDefs = this.getLevelTowerDefinitions();
         this.generateParabolaLevel();
+        this.createBoundaryWalls();
 
         // 4. UI & Controls
         this.cursors = this.input.keyboard!.createCursorKeys();
@@ -286,6 +289,7 @@ class MainScene extends Phaser.Scene {
         this.createCatapultProblem();
         this.createUpgradeUi();
         this.createUpgradeProblems();
+        this.createCheatButton();
         this.feedbackText.setText('Answer a tower to unfreeze it. Answer the catapult to launch!');
         this.input.keyboard?.on('keydown', this.handleAnswerKey, this);
         this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
@@ -317,6 +321,54 @@ class MainScene extends Phaser.Scene {
             rigidBodyType: RAPIER.RigidBodyType.Fixed
         });
         this.floorBody.collider.setFriction(2.0);
+    }
+
+    private createBoundaryWalls() {
+        // Calculate level bounds based on catapult and platforms
+        let minX = this.catapultAnchor.x;
+        let maxX = this.catapultAnchor.x;
+        let minY = this.catapultAnchor.y;
+
+        for (const platform of this.platforms) {
+            const bounds = platform.getBounds();
+            minX = Math.min(minX, bounds.x);
+            maxX = Math.max(maxX, bounds.right);
+            minY = Math.min(minY, bounds.y);
+        }
+
+        // Level span from catapult to rightmost platform
+        const levelWidth = maxX - minX;
+        const levelHeight = FLOOR_Y - minY;
+
+        // Create boundaries at 2x the level size
+        const margin = Math.max(levelWidth, levelHeight);
+        const wallThickness = 100;
+
+        const leftX = minX - margin;
+        const rightX = maxX + margin;
+        const topY = minY - margin * 2; // Extra space above for high arcs
+        const bottomY = FLOOR_Y + 500; // Below floor
+
+        // Left wall
+        const leftWall = this.add.rectangle(leftX - wallThickness / 2, (topY + bottomY) / 2, wallThickness, bottomY - topY, 0x000000, 0);
+        this.rapier.addRigidBody(leftWall, {
+            rigidBodyType: RAPIER.RigidBodyType.Fixed,
+            collider: RAPIER.ColliderDesc.cuboid(wallThickness / 2, (bottomY - topY) / 2)
+        });
+
+        // Right wall
+        const rightWall = this.add.rectangle(rightX + wallThickness / 2, (topY + bottomY) / 2, wallThickness, bottomY - topY, 0x000000, 0);
+        this.rapier.addRigidBody(rightWall, {
+            rigidBodyType: RAPIER.RigidBodyType.Fixed,
+            collider: RAPIER.ColliderDesc.cuboid(wallThickness / 2, (bottomY - topY) / 2)
+        });
+
+        // Ceiling
+        const ceiling = this.add.rectangle((leftX + rightX) / 2, topY - wallThickness / 2, rightX - leftX + wallThickness * 2, wallThickness, 0x000000, 0);
+        this.rapier.addRigidBody(ceiling, {
+            rigidBodyType: RAPIER.RigidBodyType.Fixed,
+            collider: RAPIER.ColliderDesc.cuboid((rightX - leftX + wallThickness * 2) / 2, wallThickness / 2)
+        });
     }
 
     private createPlayerBall() {
@@ -355,11 +407,10 @@ class MainScene extends Phaser.Scene {
     private refreshBeaverStats() {
         const sizeIndex = Phaser.Math.Clamp(this.upgradeState.sizeLevel, 0, BEAVER_RADIUS_LEVELS.length - 1);
         const densityIndex = Phaser.Math.Clamp(this.upgradeState.densityLevel, 0, BEAVER_DENSITY_LEVELS.length - 1);
-        const powerIndex = Phaser.Math.Clamp(this.upgradeState.powerLevel, 0, BEAVER_POWER_LEVELS.length - 1);
 
         this.currentBeaverRadius = BEAVER_RADIUS_LEVELS[sizeIndex];
         this.currentBeaverDensity = BEAVER_DENSITY_LEVELS[densityIndex];
-        this.maxAimPower = BEAVER_POWER_LEVELS[powerIndex];
+        // maxAimPower is set from levelConfig in init(), not from upgrades
     }
 
     private applyBeaverStats() {
@@ -382,16 +433,17 @@ class MainScene extends Phaser.Scene {
 
     /**
      * The Maths part!
-     * We calculate the trajectory of a projectile launched at PERFECT_SHOT_ANGLE_DEG and PERFECT_SHOT_POWER.
+     * We calculate the trajectory of a projectile launched at PERFECT_SHOT_ANGLE_DEG and the level's perfectShotPower.
      * We place platforms along this path.
      */
     private generateParabolaLevel() {
         const startX = this.ball.x;
         const startY = this.ball.y;
+        const perfectShotPower = this.levelConfig.perfectShotPower;
 
         const rads = Phaser.Math.DegToRad(PERFECT_SHOT_ANGLE_DEG);
-        const vx = PERFECT_SHOT_POWER * Math.cos(rads);
-        const vy = PERFECT_SHOT_POWER * Math.sin(rads);
+        const vx = perfectShotPower * Math.cos(rads);
+        const vy = perfectShotPower * Math.sin(rads);
 
         // Place platforms along the "ideal" trajectory, leaving an initial gap fraction.
         // Gap fraction is based on the full trajectory until returning to the launch height (symmetric about the apex).
@@ -439,6 +491,7 @@ class MainScene extends Phaser.Scene {
             collider: RAPIER.ColliderDesc.cuboid(platW / 2, platH / 2)
         });
         this.trackObject(platform as unknown as Trackable, true);
+        this.platforms.push(platform);
 
         const towerX = platformLeft + platW / 2;
         const surfaceY = platformTop;
@@ -533,15 +586,6 @@ class MainScene extends Phaser.Scene {
                     padding: PANEL_PADDING
                 })
                 .setOrigin(0, 0)
-                .setDepth(900),
-            power: this.add
-                .text(baseX, baseY + 100, '', {
-                    fontSize: '22px',
-                    color: PANEL_TEXT_COLOR,
-                    backgroundColor: PANEL_BG_COLOR,
-                    padding: PANEL_PADDING
-                })
-                .setOrigin(0, 0)
                 .setDepth(900)
         };
 
@@ -550,7 +594,7 @@ class MainScene extends Phaser.Scene {
 
     private createUpgradeProblems() {
         const usedAnswers = new Set<number>();
-        const categories: UpgradeCategory[] = ['size', 'density', 'power'];
+        const categories: UpgradeCategory[] = ['size', 'density'];
 
         for (const category of categories) {
             if (!this.canUpgrade(category)) {
@@ -563,6 +607,50 @@ class MainScene extends Phaser.Scene {
         }
 
         this.updateUpgradeUi();
+    }
+
+    private createCheatButton() {
+        // Create a small cheat button in the top right corner (scrollFactor 0 to stay fixed on screen)
+        this.cheatButton = this.add
+            .text(10, 10, '🔓 Unfreeze All', {
+                fontSize: '16px',
+                color: '#ffffff',
+                backgroundColor: '#ff6b6bcc',
+                padding: { x: 8, y: 4 }
+            })
+            .setScrollFactor(0)
+            .setDepth(3000)
+            .setInteractive({ useHandCursor: true });
+
+        this.cheatButton.on('pointerdown', () => {
+            this.unfreezeAllTowers();
+        });
+
+        this.cheatButton.on('pointerover', () => {
+            this.cheatButton.setBackgroundColor('#ff4444cc');
+        });
+
+        this.cheatButton.on('pointerout', () => {
+            this.cheatButton.setBackgroundColor('#ff6b6bcc');
+        });
+    }
+
+    private unfreezeAllTowers() {
+        let unfrozenCount = 0;
+        for (const target of this.towerTargets) {
+            if (target.state === 'frozen') {
+                target.state = 'unfrozen';
+                target.tower.setFrozenVisual?.(false);
+                target.questionText?.destroy();
+                target.questionText = undefined;
+                unfrozenCount += 1;
+            }
+        }
+        if (unfrozenCount > 0) {
+            this.feedbackText.setText(`Cheat: ${unfrozenCount} tower${unfrozenCount === 1 ? '' : 's'} unfrozen!`);
+        } else {
+            this.feedbackText.setText('No frozen towers to unfreeze.');
+        }
     }
 
     private createAnswerInput() {
@@ -622,7 +710,7 @@ class MainScene extends Phaser.Scene {
         this.upgradeTitleText.setOrigin(0, 1).setPosition(baseX, baseY);
 
         let y = baseY + 10;
-        const categories: UpgradeCategory[] = ['size', 'density', 'power'];
+        const categories: UpgradeCategory[] = ['size', 'density'];
         for (const category of categories) {
             const text = this.upgradeQuestionTexts[category];
             text.setOrigin(0, 0).setPosition(baseX, y);
@@ -667,7 +755,7 @@ class MainScene extends Phaser.Scene {
 
     private updateUpgradeUi() {
         if (!this.upgradeQuestionTexts) return;
-        const categories: UpgradeCategory[] = ['size', 'density', 'power'];
+        const categories: UpgradeCategory[] = ['size', 'density'];
         for (const category of categories) {
             const label = this.getUpgradeLabel(category);
             const problem = this.upgradeProblems[category];
@@ -677,26 +765,15 @@ class MainScene extends Phaser.Scene {
     }
 
     private getUpgradeLabel(category: UpgradeCategory) {
-        const label = category === 'size' ? 'Size' : category === 'density' ? 'Density' : 'Power';
-        const level =
-            category === 'size'
-                ? this.upgradeState.sizeLevel + 1
-                : category === 'density'
-                    ? this.upgradeState.densityLevel + 1
-                    : this.upgradeState.powerLevel + 1;
-        const max =
-            category === 'size'
-                ? BEAVER_RADIUS_LEVELS.length
-                : category === 'density'
-                    ? BEAVER_DENSITY_LEVELS.length
-                    : BEAVER_POWER_LEVELS.length;
+        const label = category === 'size' ? 'Size' : 'Density';
+        const level = category === 'size' ? this.upgradeState.sizeLevel + 1 : this.upgradeState.densityLevel + 1;
+        const max = category === 'size' ? BEAVER_RADIUS_LEVELS.length : BEAVER_DENSITY_LEVELS.length;
         return `${label} ${level}/${max}`;
     }
 
     private canUpgrade(category: UpgradeCategory) {
         if (category === 'size') return this.upgradeState.sizeLevel < BEAVER_RADIUS_LEVELS.length - 1;
-        if (category === 'density') return this.upgradeState.densityLevel < BEAVER_DENSITY_LEVELS.length - 1;
-        return this.upgradeState.powerLevel < BEAVER_POWER_LEVELS.length - 1;
+        return this.upgradeState.densityLevel < BEAVER_DENSITY_LEVELS.length - 1;
     }
 
     private applyUpgrade(category: UpgradeCategory) {
@@ -704,7 +781,6 @@ class MainScene extends Phaser.Scene {
 
         if (category === 'size') this.upgradeState.sizeLevel += 1;
         if (category === 'density') this.upgradeState.densityLevel += 1;
-        if (category === 'power') this.upgradeState.powerLevel += 1;
 
         gameState.upgrades = { ...this.upgradeState };
         this.applyBeaverStats();
@@ -715,7 +791,7 @@ class MainScene extends Phaser.Scene {
     }
 
     private tryUpgrade(answerValue: number | string) {
-        const categories: UpgradeCategory[] = ['size', 'density', 'power'];
+        const categories: UpgradeCategory[] = ['size', 'density'];
         for (const category of categories) {
             const problem = this.upgradeProblems[category];
             if (!problem) continue;
@@ -742,7 +818,7 @@ class MainScene extends Phaser.Scene {
         }
 
         const usedAnswers = new Set<number>();
-        const categories: UpgradeCategory[] = ['size', 'density', 'power'];
+        const categories: UpgradeCategory[] = ['size', 'density'];
         for (const other of categories) {
             if (other === category) continue;
             const problem = this.upgradeProblems[other];
@@ -1236,6 +1312,7 @@ class MainScene extends Phaser.Scene {
         if (this.hasLaunched) return;
         this.hasLaunched = true;
         this.simStoppedAtMs = null;
+        this.launchTimeMs = this.time.now;
         this.catapultProblem = undefined;
         this.catapultQuestionText.setText('');
 
@@ -1346,6 +1423,15 @@ class MainScene extends Phaser.Scene {
                 resetDelayMs: BALL_RESET_DELAY_MS
             });
             this.resetBallToCatapult();
+            return;
+        }
+
+        // Fallback: reset after 7 seconds regardless of simulation state
+        if (this.launchTimeMs !== null && timeMs - this.launchTimeMs >= 7000) {
+            console.log('[sim] fallback reset after 7s timeout', {
+                elapsedMs: Math.round(timeMs - this.launchTimeMs)
+            });
+            this.resetBallToCatapult();
         }
     }
 
@@ -1361,7 +1447,6 @@ class MainScene extends Phaser.Scene {
         if (this.upgradeQuestionTexts) {
             this.upgradeQuestionTexts.size.setVisible(false);
             this.upgradeQuestionTexts.density.setVisible(false);
-            this.upgradeQuestionTexts.power.setVisible(false);
         }
         this.answerInputValue = '';
         this.updateAnswerText();
@@ -1487,15 +1572,34 @@ class MainScene extends Phaser.Scene {
         const camera = this.cameras.main;
         const viewWidth = camera.width / this.dpr;
         const viewHeight = camera.height / this.dpr;
-        const tracked = this.getBallTrackables();
-        if (!tracked.length) return;
+        const trackedBalls = this.getBallTrackables();
+        const trackedPlatforms = this.getPlatformTrackables();
+
+        // Must have platforms to calculate camera target (we always have them after level init)
+        if (!trackedPlatforms.length) return;
 
         let minX = Infinity;
         let minY = Infinity;
         let maxX = -Infinity;
         let maxY = -Infinity;
 
-        for (const obj of tracked) {
+        // Always include catapult anchor so it stays visible
+        minX = Math.min(minX, this.catapultAnchor.x);
+        minY = Math.min(minY, this.catapultAnchor.y);
+        maxX = Math.max(maxX, this.catapultAnchor.x);
+        maxY = Math.max(maxY, this.catapultAnchor.y);
+
+        // Always include platforms in bounds calculation so they stay visible
+        for (const obj of trackedPlatforms) {
+            const bounds = obj.getBounds();
+            minX = Math.min(minX, bounds.x);
+            minY = Math.min(minY, bounds.y);
+            maxX = Math.max(maxX, bounds.right);
+            maxY = Math.max(maxY, bounds.bottom);
+        }
+
+        // Also include balls
+        for (const obj of trackedBalls) {
             const bounds = obj.getBounds();
             minX = Math.min(minX, bounds.x);
             minY = Math.min(minY, bounds.y);
@@ -1517,6 +1621,13 @@ class MainScene extends Phaser.Scene {
         const centerY = (minY + maxY) / 2;
 
         return { x: centerX, y: centerY, zoom: scaledZoom };
+    }
+
+    private getPlatformTrackables(): Trackable[] {
+        // Return all platforms as trackables
+        return this.platforms
+            .filter(p => p.active)
+            .map(p => p as unknown as Trackable);
     }
 
     private getBallTrackables(): Trackable[] {
