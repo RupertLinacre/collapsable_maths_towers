@@ -35,11 +35,6 @@ export const PLANK_WIDTH = 20; // thickness
 export const PLANK_LENGTH = 120; // long side (equal for all planks)
 export const PLANK_DENSITY = 4.0;
 
-// --- Background ---
-export const BACKGROUND_SCALE = 4.0;
-export const BACKGROUND_ANCHOR_X = 100;
-export const BACKGROUND_ANCHOR_Y = 1000;
-
 // --- Beaver / Ball ---
 export const BEAVER_RADIUS = 45;
 export const BEAVER_DENSITY = 0.8;

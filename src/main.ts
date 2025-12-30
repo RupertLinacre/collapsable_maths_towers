@@ -11,9 +11,6 @@ import {
     AIM_ANGLE_MIN_DEG,
     AIM_POWER_MAX,
     AIM_POWER_MIN,
-    BACKGROUND_ANCHOR_X,
-    BACKGROUND_ANCHOR_Y,
-    BACKGROUND_SCALE,
     BALL_RESET_DELAY_MS,
     CATAPULT_HEIGHT_ABOVE_FLOOR,
     BEAVER_DENSITY_LEVELS,
@@ -32,7 +29,6 @@ import {
 import logUrl from './assets/images/tower_objects/log.png?as=url';
 import logFrozenUrl from './assets/images/tower_objects/log_frozen.png?as=url';
 import beaverUrl from './assets/images/balls/beaver/beaver.png?as=url';
-import backgroundUrl from './assets/images/backgrounds/background.png?as=url';
 import { preloadTowerBallTextures, setBallMood, type TowerBall } from './towerBalls';
 import { SettingsScene } from './SettingsScene';
 import { gameSettings } from './gameSettings';
@@ -45,7 +41,6 @@ await RAPIER.init();
 
 // --- CONFIGURATION ---
 const FLOOR_Y = 800;
-const CAMERA_FLOOR_PADDING = 60; // Show a small slice of the ground
 const UNIVERSE_WIDTH = 200_000;
 const BALL_STOP_SPEED = 0.01;
 const SIM_STOP_ANGULAR_SPEED = 0.00001;
@@ -85,8 +80,6 @@ type UpgradeCategory = 'size' | 'density' | 'power';
 
 class MainScene extends Phaser.Scene {
     private rapier!: RapierPhysics;
-    private backgroundImage?: Phaser.GameObjects.Image;
-    private backgroundAnchor = { x: BACKGROUND_ANCHOR_X, y: BACKGROUND_ANCHOR_Y };
 
     // Game Objects
     private ball!: Phaser.GameObjects.Container;
@@ -200,7 +193,6 @@ class MainScene extends Phaser.Scene {
         this.load.image('log1', logUrl);
         this.load.image('log_frozen', logFrozenUrl);
         this.load.image('beaver', beaverUrl);
-        this.load.image('background', backgroundUrl);
         preloadTowerBallTextures(this);
         this.load.audio('splash1', new URL('./assets/sound_effects/splashing_sounds/1.mp3', import.meta.url).toString());
         this.load.audio('splash2', new URL('./assets/sound_effects/splashing_sounds/2.mp3', import.meta.url).toString());
@@ -227,7 +219,6 @@ class MainScene extends Phaser.Scene {
         this.createInfiniteFloor();
         this.createPlayerBall();
         this.applyBeaverStats();
-        this.createBackground();
 
         // 3. Generate Level based on Math
         this.activeTowerDefs = this.getLevelTowerDefinitions();
@@ -311,15 +302,6 @@ class MainScene extends Phaser.Scene {
         this.updateTowerBallCounts();
         this.updateUI();
         this.updateWinLayout();
-    }
-
-    private createBackground() {
-        this.backgroundImage = this.add
-            .image(this.backgroundAnchor.x, this.backgroundAnchor.y, 'background')
-            .setOrigin(0.5, 1)
-            .setDepth(-100)
-            .setAlpha(1);
-        this.backgroundImage.setScale(BACKGROUND_SCALE);
     }
 
     private createInfiniteFloor() {
@@ -1495,13 +1477,7 @@ class MainScene extends Phaser.Scene {
 
         const newZoom = Phaser.Math.Linear(camera.zoom, target.zoom, smoothing);
         let newX = Phaser.Math.Linear(camera.midPoint.x, target.x, smoothing);
-        let newY = this.getPinnedCenterY(newZoom);
-
-        const clamped = this.clampCameraCenterToBackground(newX, newY, newZoom);
-        if (clamped) {
-            newX = clamped.x;
-            newY = clamped.y;
-        }
+        let newY = Phaser.Math.Linear(camera.midPoint.y, target.y, smoothing);
 
         camera.setZoom(newZoom);
         camera.centerOn(newX, newY);
@@ -1511,14 +1487,7 @@ class MainScene extends Phaser.Scene {
         const camera = this.cameras.main;
         const viewWidth = camera.width / this.dpr;
         const viewHeight = camera.height / this.dpr;
-        const tracked: Trackable[] = [];
-
-        for (const t of this.trackedObjects) {
-            if (!t.includeInBounds) continue;
-            if (!t.obj.active) continue;
-            tracked.push(t.obj);
-        }
-
+        const tracked = this.getBallTrackables();
         if (!tracked.length) return;
 
         let minX = Infinity;
@@ -1537,83 +1506,35 @@ class MainScene extends Phaser.Scene {
         if (!isFinite(minX) || !isFinite(minY) || !isFinite(maxX) || !isFinite(maxY)) return;
 
         const width = Math.max(1, maxX - minX);
+        const height = Math.max(1, maxY - minY);
         const paddedWidth = width + padding * 2;
+        const paddedHeight = height + padding * 2;
 
-        // Pin the bottom of the view to the floor with a little breathing room.
-        const top = minY - padding;
-        const bottom = FLOOR_Y + CAMERA_FLOOR_PADDING;
-        const requiredHeight = Math.max(1, bottom - top);
-
-        const backgroundMinZoom = this.getBackgroundMinZoom();
-        const zoomFloor = backgroundMinZoom ? Math.max(minZoom, backgroundMinZoom) : minZoom;
-
-        const zoom = Phaser.Math.Clamp(Math.min(viewWidth / paddedWidth, viewHeight / requiredHeight), zoomFloor, maxZoom);
+        const zoom = Phaser.Math.Clamp(Math.min(viewWidth / paddedWidth, viewHeight / paddedHeight), minZoom, maxZoom);
         const scaledZoom = zoom * this.dpr;
 
         const centerX = (minX + maxX) / 2;
-        const centerY = this.getPinnedCenterY(scaledZoom);
+        const centerY = (minY + maxY) / 2;
 
         return { x: centerX, y: centerY, zoom: scaledZoom };
     }
 
-    private getPinnedCenterY(zoom: number) {
-        const halfViewHeight = this.cameras.main.height / (2 * zoom);
-        return (FLOOR_Y + CAMERA_FLOOR_PADDING) - halfViewHeight;
-    }
+    private getBallTrackables(): Trackable[] {
+        const tracked: Trackable[] = [];
 
-    private getBackgroundMinZoom() {
-        const bounds = this.getBackgroundBounds();
-        if (!bounds) return null;
+        if (this.ball?.active) {
+            tracked.push(this.ball as unknown as Trackable);
+        }
 
-        const camera = this.cameras.main;
-        const viewWidth = camera.width / this.dpr;
-        const viewHeight = camera.height / this.dpr;
-        return Math.max(viewWidth / bounds.width, viewHeight / bounds.height);
-    }
+        for (const target of this.towerTargets) {
+            const balls = target.tower.ballBodies ?? [];
+            for (const ball of balls) {
+                if (!ball.sprite.active) continue;
+                tracked.push(ball.sprite as unknown as Trackable);
+            }
+        }
 
-    private clampCameraCenterToBackground(x: number, y: number, zoom: number) {
-        const bounds = this.getBackgroundBounds();
-        if (!bounds) return null;
-
-        const camera = this.cameras.main;
-        const halfViewW = camera.width / (2 * zoom);
-        const halfViewH = camera.height / (2 * zoom);
-
-        const left = bounds.left;
-        const right = bounds.right;
-        const top = bounds.top;
-        const bottom = bounds.bottom;
-
-        const minX = left + halfViewW;
-        const maxX = right - halfViewW;
-        const minY = top + halfViewH;
-        const maxY = bottom - halfViewH;
-
-        return {
-            x: minX > maxX ? (left + right) / 2 : Phaser.Math.Clamp(x, minX, maxX),
-            y: minY > maxY ? (top + bottom) / 2 : Phaser.Math.Clamp(y, minY, maxY)
-        };
-    }
-
-    private getBackgroundBounds() {
-        if (!this.backgroundImage) return null;
-        const sourceW = this.backgroundImage.width;
-        const sourceH = this.backgroundImage.height;
-        if (!isFinite(sourceW) || !isFinite(sourceH) || sourceW <= 0 || sourceH <= 0) return null;
-
-        const width = sourceW * BACKGROUND_SCALE;
-        const height = sourceH * BACKGROUND_SCALE;
-        const centerX = BACKGROUND_ANCHOR_X;
-        const bottomY = BACKGROUND_ANCHOR_Y;
-
-        return {
-            width,
-            height,
-            left: centerX - width / 2,
-            right: centerX + width / 2,
-            top: bottomY - height,
-            bottom: bottomY
-        };
+        return tracked;
     }
 }
 
