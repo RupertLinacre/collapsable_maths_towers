@@ -160,7 +160,7 @@ export class TowerBuilderScene extends Phaser.Scene {
 
         this.add
             .text(20, 20, HUD_TEXT, {
-                fontSize: '20px',
+                fontSize: '27px',
                 color: '#ffffff',
                 backgroundColor: '#000000aa',
                 padding: { x: 10, y: 6 }
@@ -170,7 +170,7 @@ export class TowerBuilderScene extends Phaser.Scene {
 
         this.modeText = this.add
             .text(20, 60, 'Mode: PAUSED', {
-                fontSize: '18px',
+                fontSize: '24px',
                 color: '#ffffff',
                 backgroundColor: '#000000aa',
                 padding: { x: 10, y: 6 }
@@ -182,7 +182,7 @@ export class TowerBuilderScene extends Phaser.Scene {
 
         const downloadButton = this.add
             .text(this.viewWidth - 20, 20, 'Download JSON', {
-                fontSize: '18px',
+                fontSize: '24px',
                 color: '#ffffff',
                 backgroundColor: '#000000aa',
                 padding: { x: 10, y: 6 }
@@ -196,7 +196,7 @@ export class TowerBuilderScene extends Phaser.Scene {
 
         const loadButton = this.add
             .text(0, 20, 'Load JSON', {
-                fontSize: '18px',
+                fontSize: '24px',
                 color: '#ffffff',
                 backgroundColor: '#000000aa',
                 padding: { x: 10, y: 6 }
@@ -273,7 +273,7 @@ export class TowerBuilderScene extends Phaser.Scene {
 
         const label = this.add
             .text(0, -18, 'Object', {
-                fontSize: '16px',
+                fontSize: '21px',
                 color: '#ffffff',
                 backgroundColor: '#000000aa',
                 padding: { x: 8, y: 4 }
@@ -339,7 +339,7 @@ export class TowerBuilderScene extends Phaser.Scene {
         const background = this.add.rectangle(0, 0, width, height, 0x000000, 0.35).setStrokeStyle(2, 0xffffff, 0.4);
         const icon = this.add.image(0, -4, textureKey).setDisplaySize(iconW, iconH);
         const text = this.add.text(0, height / 2 - 12, label, {
-            fontSize: '12px',
+            fontSize: '16px',
             color: '#ffffff'
         }).setOrigin(0.5, 0.5);
 

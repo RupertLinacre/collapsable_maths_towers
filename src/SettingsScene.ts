@@ -61,28 +61,28 @@ export class SettingsScene extends Phaser.Scene {
         this.enterKey = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.ENTER);
 
         this.titleText = this.add.text(0, 0, 'Beavers vs Towers vs Maths', {
-            fontSize: '48px',
+            fontSize: '64px',
             color: '#ffffff',
             backgroundColor: '#000000aa',
             padding: { x: 14, y: 10 }
         });
 
         this.yearText = this.add.text(0, 0, '', {
-            fontSize: '32px',
+            fontSize: '43px',
             color: '#ffffff',
             backgroundColor: '#00000099',
             padding: { x: 12, y: 8 }
         });
 
         this.typeText = this.add.text(0, 0, '', {
-            fontSize: '32px',
+            fontSize: '43px',
             color: '#ffffff',
             backgroundColor: '#00000099',
             padding: { x: 12, y: 8 }
         });
 
         this.levelText = this.add.text(0, 0, 'Select Level:', {
-            fontSize: '28px',
+            fontSize: '37px',
             color: '#ffffff',
             backgroundColor: '#00000099',
             padding: { x: 12, y: 8 }
@@ -92,7 +92,7 @@ export class SettingsScene extends Phaser.Scene {
         this.levelButtons = [];
         for (let i = 0; i < LEVELS.length; i++) {
             const btn = this.add.text(0, 0, `${i + 1}`, {
-                fontSize: '24px',
+                fontSize: '32px',
                 color: '#ffffff',
                 backgroundColor: i === this.selectedLevel ? '#4CAF50cc' : '#00000099',
                 padding: { x: 12, y: 8 }
@@ -111,7 +111,7 @@ export class SettingsScene extends Phaser.Scene {
         }
 
         this.hintText = this.add.text(0, 0, 'Left/Right: difficulty  Up/Down: type  Click level to select  Enter: start', {
-            fontSize: '18px',
+            fontSize: '24px',
             color: '#f5f5f5',
             backgroundColor: '#00000066',
             padding: { x: 10, y: 6 }

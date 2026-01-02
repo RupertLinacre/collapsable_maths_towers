@@ -262,35 +262,35 @@ class MainScene extends Phaser.Scene {
         this.aimGraphics = this.add.graphics().setDepth(100);
 
         this.statsText = this.add.text(20, 20, '', {
-            fontSize: '26px',
+            fontSize: '35px',
             color: PANEL_TEXT_COLOR,
             backgroundColor: PANEL_BG_COLOR,
             padding: PANEL_PADDING
         }).setDepth(1000);
 
         this.scoreText = this.add.text(20, 110, '', {
-            fontSize: '24px',
+            fontSize: '32px',
             color: PANEL_TEXT_COLOR,
             backgroundColor: PANEL_BG_COLOR,
             padding: PANEL_PADDING
         }).setDepth(1000);
 
         this.feedbackText = this.add.text(20, 180, '', {
-            fontSize: '22px',
+            fontSize: '29px',
             color: PANEL_TEXT_COLOR,
             backgroundColor: PANEL_BG_COLOR,
             padding: PANEL_PADDING
         }).setDepth(1000);
 
         this.levelText = this.add.text(20, 250, '', {
-            fontSize: '24px',
+            fontSize: '32px',
             color: PANEL_TEXT_COLOR,
             backgroundColor: PANEL_BG_COLOR,
             padding: PANEL_PADDING
         }).setDepth(1000);
 
         this.winText = this.add.text(0, 0, 'Level complete!\nPress Enter to proceed', {
-            fontSize: '36px',
+            fontSize: '48px',
             color: '#ffffff',
             backgroundColor: '#000000cc',
             padding: { x: 18, y: 14 },
@@ -304,7 +304,7 @@ class MainScene extends Phaser.Scene {
                 this.catapultAnchor.y + CATAPULT_PANEL_OFFSET_Y,
                 '',
                 {
-                    fontSize: '24px',
+                    fontSize: '32px',
                     color: PANEL_TEXT_COLOR,
                     backgroundColor: PANEL_BG_COLOR,
                     padding: PANEL_PADDING
@@ -655,7 +655,7 @@ class MainScene extends Phaser.Scene {
 
         const problem = this.generateProblemFromSettings();
         const questionText = this.add.text(towerX, surfaceY + ANSWER_TEXT_OFFSET_Y, `${problem.expression} = ?`, {
-            fontSize: '32px',
+            fontSize: '43px',
             color: '#1b1b1b',
             backgroundColor: '#ffffffcc',
             padding: { x: 8, y: 4 }
@@ -703,7 +703,7 @@ class MainScene extends Phaser.Scene {
 
         this.upgradeTitleText = this.add
             .text(baseX, baseY, 'Beaver upgrades', {
-                fontSize: '26px',
+                fontSize: '35px',
                 color: PANEL_TEXT_COLOR,
                 backgroundColor: PANEL_BG_COLOR,
                 padding: PANEL_PADDING
@@ -715,7 +715,7 @@ class MainScene extends Phaser.Scene {
         this.upgradeQuestionTexts = {
             size: this.add
                 .text(baseX, baseY + 10, '', {
-                    fontSize: '22px',
+                    fontSize: '29px',
                     color: PANEL_TEXT_COLOR,
                     backgroundColor: PANEL_BG_COLOR,
                     padding: PANEL_PADDING
@@ -724,7 +724,7 @@ class MainScene extends Phaser.Scene {
                 .setDepth(900),
             density: this.add
                 .text(baseX, baseY + 55, '', {
-                    fontSize: '22px',
+                    fontSize: '29px',
                     color: PANEL_TEXT_COLOR,
                     backgroundColor: PANEL_BG_COLOR,
                     padding: PANEL_PADDING
@@ -757,7 +757,7 @@ class MainScene extends Phaser.Scene {
         // Create a small cheat button in the top right corner (scrollFactor 0 to stay fixed on screen)
         this.cheatButton = this.add
             .text(10, 10, '🔓 Unfreeze All', {
-                fontSize: '16px',
+                fontSize: '21px',
                 color: '#ffffff',
                 backgroundColor: '#ff6b6bcc',
                 padding: { x: 8, y: 4 }
@@ -810,13 +810,13 @@ class MainScene extends Phaser.Scene {
             .setDepth(1000);
 
         this.answerText = this.add
-            .text(panelCenterX, y, '', { fontSize: '26px', color: PANEL_TEXT_COLOR })
+            .text(panelCenterX, y, '', { fontSize: '35px', color: PANEL_TEXT_COLOR })
             .setOrigin(0.5, 0.5)
             .setDepth(1001);
 
         this.answerHintText = this.add
             .text(panelLeft, y + boxHeight / 2 + 6, 'Type answer + Enter', {
-                fontSize: '20px',
+                fontSize: '27px',
                 color: PANEL_TEXT_COLOR,
                 backgroundColor: PANEL_BG_COLOR,
                 padding: PANEL_PADDING
@@ -830,52 +830,58 @@ class MainScene extends Phaser.Scene {
 
     private updateAnswerLayout() {
         if (!this.answerBox || !this.answerText || !this.answerHintText || !this.catapultQuestionText) return;
-        const panelLeft = this.catapultAnchor.x + CATAPULT_PANEL_OFFSET_X;
-        const panelY = this.catapultAnchor.y + CATAPULT_PANEL_OFFSET_Y;
-        const panelCenterX = panelLeft + ANSWER_BOX_WIDTH / 2;
+        const uiScale = this.getUiScale();
+        const panelLeft = this.catapultAnchor.x + CATAPULT_PANEL_OFFSET_X * uiScale;
+        const panelY = this.catapultAnchor.y + CATAPULT_PANEL_OFFSET_Y * uiScale;
+        const boxWidth = ANSWER_BOX_WIDTH * uiScale;
+        const boxHeight = ANSWER_BOX_HEIGHT * uiScale;
+        const panelCenterX = panelLeft + boxWidth / 2;
 
         this.catapultQuestionText.setOrigin(0, 0).setPosition(panelLeft, panelY);
 
-        const questionHeight = this.catapultQuestionText.height;
-        const answerTop = panelY + questionHeight + ANSWER_PANEL_GAP;
-        const answerCenterY = answerTop + ANSWER_BOX_HEIGHT / 2;
+        const questionHeight = this.catapultQuestionText.displayHeight;
+        const answerTop = panelY + questionHeight + ANSWER_PANEL_GAP * uiScale;
+        const answerCenterY = answerTop + boxHeight / 2;
 
         this.answerBox.setSize(ANSWER_BOX_WIDTH, ANSWER_BOX_HEIGHT);
         this.answerBox.setPosition(panelCenterX, answerCenterY);
         this.answerText.setPosition(panelCenterX, answerCenterY);
-        const hintY = answerCenterY + ANSWER_BOX_HEIGHT / 2 + 30;
+        const hintY = answerCenterY + boxHeight / 2 + 30 * uiScale;
         this.answerHintText.setPosition(panelLeft, hintY);
     }
 
     private updateUpgradeLayout() {
         if (!this.upgradeTitleText || !this.upgradeQuestionTexts) return;
-        const baseX = this.catapultAnchor.x + UPGRADE_PANEL_OFFSET_X;
-        const baseY = this.catapultAnchor.y + UPGRADE_PANEL_OFFSET_Y;
+        const uiScale = this.getUiScale();
+        const baseX = this.catapultAnchor.x + UPGRADE_PANEL_OFFSET_X * uiScale;
+        const baseY = this.catapultAnchor.y + UPGRADE_PANEL_OFFSET_Y * uiScale;
         this.upgradeTitleText.setOrigin(0, 1).setPosition(baseX, baseY);
 
-        let y = baseY + 10;
+        let y = baseY + 10 * uiScale;
         const categories: UpgradeCategory[] = ['size', 'density'];
         for (const category of categories) {
             const text = this.upgradeQuestionTexts[category];
             text.setOrigin(0, 0).setPosition(baseX, y);
-            y += text.height + UPGRADE_LINE_GAP;
+            y += text.displayHeight + UPGRADE_LINE_GAP * uiScale;
         }
     }
 
     private updateHudLayout() {
         if (!this.statsText || !this.scoreText || !this.feedbackText || !this.levelText) return;
-        const upgradeBaseX = this.catapultAnchor.x + UPGRADE_PANEL_OFFSET_X;
-        const upgradeBaseY = this.catapultAnchor.y + UPGRADE_PANEL_OFFSET_Y;
-        const upgradeTop = this.upgradeTitleText ? upgradeBaseY - this.upgradeTitleText.height : upgradeBaseY;
+        const uiScale = this.getUiScale();
+        const upgradeBaseX = this.catapultAnchor.x + UPGRADE_PANEL_OFFSET_X * uiScale;
+        const upgradeBaseY = this.catapultAnchor.y + UPGRADE_PANEL_OFFSET_Y * uiScale;
+        const upgradeTop = this.upgradeTitleText ? upgradeBaseY - this.upgradeTitleText.displayHeight : upgradeBaseY;
+        const hudGap = HUD_PANEL_GAP * uiScale;
 
         const blocks = [this.levelText, this.statsText, this.scoreText, this.feedbackText];
         const totalHeight =
-            blocks.reduce((sum, text) => sum + text.height, 0) + HUD_PANEL_GAP * Math.max(0, blocks.length - 1);
+            blocks.reduce((sum, text) => sum + text.displayHeight, 0) + hudGap * Math.max(0, blocks.length - 1);
 
-        let y = upgradeTop - totalHeight - HUD_PANEL_GAP;
+        let y = upgradeTop - totalHeight - hudGap;
         for (const text of blocks) {
             text.setOrigin(0, 0).setPosition(upgradeBaseX, y);
-            y += text.height + HUD_PANEL_GAP;
+            y += text.displayHeight + hudGap;
         }
 
         this.updateUpgradeLayout();
@@ -895,6 +901,44 @@ class MainScene extends Phaser.Scene {
         const hasInput = this.answerInputValue.length > 0;
         this.answerHintText.setVisible(!hasInput);
         this.answerBox.setStrokeStyle(3, hasInput ? PANEL_BORDER_HEX : 0x555555, 1);
+    }
+
+    private getUiScale() {
+        const zoom = this.cameras.main.zoom || 1;
+        return zoom > 0 ? 1 / zoom : 1;
+    }
+
+    private applyUiScale() {
+        const uiScale = this.getUiScale();
+        const applyScale = (obj?: Phaser.GameObjects.Components.Transform) => {
+            if (!obj) return;
+            obj.setScale(uiScale);
+        };
+
+        applyScale(this.statsText);
+        applyScale(this.scoreText);
+        applyScale(this.feedbackText);
+        applyScale(this.levelText);
+        applyScale(this.catapultQuestionText);
+        applyScale(this.upgradeTitleText);
+        applyScale(this.answerBox);
+        applyScale(this.answerText);
+        applyScale(this.answerHintText);
+
+        if (this.upgradeQuestionTexts) {
+            for (const text of Object.values(this.upgradeQuestionTexts)) {
+                applyScale(text);
+            }
+        }
+
+        for (const target of this.towerTargets) {
+            if (!target.questionText) continue;
+            target.questionText.setScale(uiScale);
+            target.questionText.setPosition(
+                target.questionText.x,
+                target.platformSurfaceY + ANSWER_TEXT_OFFSET_Y * uiScale
+            );
+        }
     }
 
     private updateUpgradeUi() {
@@ -1701,7 +1745,10 @@ class MainScene extends Phaser.Scene {
         // Get minimum zoom based on background bounds
         const minZoom = this.getMinZoomForBackground();
         const target = this.getCameraTarget(250, minZoom, 1.0);
-        if (!target) return;
+        if (!target) {
+            this.applyUiScale();
+            return;
+        }
 
         const camera = this.cameras.main;
         const smoothing = 1 - Math.pow(1 - this.cameraSmoothing, delta / 16.6667);
@@ -1719,6 +1766,8 @@ class MainScene extends Phaser.Scene {
 
         camera.setZoom(newZoom);
         camera.centerOn(newX, newY);
+
+        this.applyUiScale();
 
         // Update parallax background position
         this.updateParallaxBackground(newX, newY);
