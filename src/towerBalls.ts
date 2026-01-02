@@ -2,15 +2,38 @@ import type Phaser from 'phaser';
 import { RAPIER } from './physics';
 import type { RapierBody, RapierPhysics } from './physics';
 import type { Trackable } from './towerPlanks';
-import ballDadHappyUrl from './assets/images/balls/dad/ball_happy.png?as=url';
-import ballDadSurprisedUrl from './assets/images/balls/dad/ball_surprised.png?as=url';
-import ballDadAngryUrl from './assets/images/balls/dad/ball_angry.png?as=url';
-import ballMumHappyUrl from './assets/images/balls/mum/mum_happy.png?as=url';
-import ballMumSurprisedUrl from './assets/images/balls/mum/ball_surprised.png?as=url';
-import ballMumAngryUrl from './assets/images/balls/mum/ball_angry.png?as=url';
 
-export type BallPerson = 'dad' | 'mum';
-export type BallMood = 'happy' | 'surprised' | 'angry';
+const towerBallModules = import.meta.glob('./assets/images/balls/tower_balls/*/ball_*.png', {
+    eager: true,
+    query: '?as=url',
+    import: 'default'
+}) as Record<string, string>;
+
+const TOWER_BALL_PATH_RE = /\/tower_balls\/([^/]+)\/ball_([^/.]+)\.png$/;
+
+const BALL_TEXTURE_KEYS: Record<string, Record<string, string>> = {};
+const BALL_TEXTURE_URLS: Record<string, Record<string, string>> = {};
+const BALL_PEOPLE: string[] = [];
+
+for (const [path, url] of Object.entries(towerBallModules)) {
+    const match = path.match(TOWER_BALL_PATH_RE);
+    if (!match) continue;
+    const [, person, mood] = match;
+    if (!BALL_TEXTURE_KEYS[person]) {
+        BALL_TEXTURE_KEYS[person] = {};
+        BALL_TEXTURE_URLS[person] = {};
+        BALL_PEOPLE.push(person);
+    }
+    BALL_TEXTURE_KEYS[person][mood] = `ball_${person}_${mood}`;
+    BALL_TEXTURE_URLS[person][mood] = url;
+}
+
+if (BALL_PEOPLE.length === 0) {
+    throw new Error('No tower ball assets found in src/assets/images/balls/tower_balls');
+}
+
+export type BallPerson = string;
+export type BallMood = 'happy' | 'surprised' | 'grumpy' | 'laughing';
 
 export type TowerBall = {
     sprite: Phaser.GameObjects.Image;
@@ -29,52 +52,35 @@ export type BallContext = {
     trackObject: (obj: Trackable, includeInBounds?: boolean) => void;
 };
 
-const BALL_TEXTURE_KEYS: Record<BallPerson, Record<BallMood, string>> = {
-    dad: {
-        happy: 'ball_dad_happy',
-        surprised: 'ball_dad_surprised',
-        angry: 'ball_dad_angry'
-    },
-    mum: {
-        happy: 'ball_mum_happy',
-        surprised: 'ball_mum_surprised',
-        angry: 'ball_mum_angry'
-    }
-};
+const DEFAULT_BALL_MOOD: BallMood = 'happy';
+const DEFAULT_BALL_PERSON = BALL_PEOPLE[0];
 
-const BALL_TEXTURE_URLS: Record<BallPerson, Record<BallMood, string>> = {
-    dad: {
-        happy: ballDadHappyUrl,
-        surprised: ballDadSurprisedUrl,
-        angry: ballDadAngryUrl
-    },
-    mum: {
-        happy: ballMumHappyUrl,
-        surprised: ballMumSurprisedUrl,
-        angry: ballMumAngryUrl
-    }
-};
-
-export const BALL_PREVIEW_TEXTURE_KEY = BALL_TEXTURE_KEYS.dad.happy;
+export const BALL_PREVIEW_TEXTURE_KEY =
+    DEFAULT_BALL_PERSON && BALL_TEXTURE_KEYS[DEFAULT_BALL_PERSON]?.[DEFAULT_BALL_MOOD]
+        ? BALL_TEXTURE_KEYS[DEFAULT_BALL_PERSON][DEFAULT_BALL_MOOD]
+        : 'ball_preview';
 
 const BALL_FRICTION = 0.6;
 const BALL_RESTITUTION = 0.25;
 const BALL_DENSITY = 1.0;
 
 function getBallTextureKey(person: BallPerson, mood: BallMood) {
-    return BALL_TEXTURE_KEYS[person][mood];
+    const personKeys = BALL_TEXTURE_KEYS[person];
+    if (!personKeys) return BALL_PREVIEW_TEXTURE_KEY;
+    return personKeys[mood] ?? personKeys[DEFAULT_BALL_MOOD] ?? BALL_PREVIEW_TEXTURE_KEY;
 }
 
 function pickRandomPerson(): BallPerson {
-    return Math.random() < 0.5 ? 'dad' : 'mum';
+    const count = BALL_PEOPLE.length;
+    return BALL_PEOPLE[Math.floor(Math.random() * count)];
 }
 
 export function preloadTowerBallTextures(scene: Phaser.Scene) {
-    for (const person of Object.keys(BALL_TEXTURE_URLS) as BallPerson[]) {
+    for (const person of Object.keys(BALL_TEXTURE_URLS)) {
         const moods = BALL_TEXTURE_URLS[person];
-        scene.load.image(BALL_TEXTURE_KEYS[person].happy, moods.happy);
-        scene.load.image(BALL_TEXTURE_KEYS[person].surprised, moods.surprised);
-        scene.load.image(BALL_TEXTURE_KEYS[person].angry, moods.angry);
+        for (const [mood, url] of Object.entries(moods)) {
+            scene.load.image(BALL_TEXTURE_KEYS[person][mood], url);
+        }
     }
 }
 

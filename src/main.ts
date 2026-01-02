@@ -16,6 +16,8 @@ import {
     BEAVER_RADIUS_LEVELS,
     DEBUG_BOUNDS,
     DEBUG_RAPIER,
+    PARALLAX_FACTOR,
+    PARALLAX_PADDING_FRACTION,
     PERFECT_SHOT_ANGLE_DEG,
     PLATFORM_HEIGHT,
     PLATFORM_PARABOLA_Y_OFFSET,
@@ -25,12 +27,27 @@ import {
 } from './config';
 import logUrl from './assets/images/tower_objects/log.png?as=url';
 import logFrozenUrl from './assets/images/tower_objects/log_frozen.png?as=url';
-import beaverUrl from './assets/images/balls/beaver/beaver.png?as=url';
+// Bypass imagetools processing for background - use original resolution PNG
+import backgroundUrl from './assets/images/backgrounds/background.png?url';
 import { preloadTowerBallTextures, setBallMood, type TowerBall } from './towerBalls';
 import { SettingsScene } from './SettingsScene';
 import { gameSettings } from './gameSettings';
 import { gameState, type BeaverUpgradeState } from './gameState';
 import { LEVELS, type LevelConfig } from './levels';
+
+const toShootModules = import.meta.glob('./assets/images/balls/to_shoot/**/*.png', {
+    eager: true,
+    query: '?as=url',
+    import: 'default'
+}) as Record<string, string>;
+
+const beaverUrl =
+    Object.entries(toShootModules).find(([path]) => path.includes('/beaver/'))?.[1] ??
+    Object.values(toShootModules)[0];
+
+if (!beaverUrl) {
+    throw new Error('No to_shoot beaver asset found in src/assets/images/balls/to_shoot');
+}
 
 // Phaser does not await an async Scene.create(), so Rapier must be initialized
 // before the game boots (otherwise update() runs with uninitialized state).
@@ -77,6 +94,12 @@ type UpgradeCategory = 'size' | 'density';
 
 class MainScene extends Phaser.Scene {
     private rapier!: RapierPhysics;
+
+    // Parallax Background
+    private backgroundImage?: Phaser.GameObjects.Image;
+    private levelBounds = { minX: 0, maxX: 0, minY: 0, maxY: 0 };
+    private parallaxCenter = { x: 0, y: 0 };
+    private backgroundScale = 1;
 
     // Game Objects
     private ball!: Phaser.GameObjects.Container;
@@ -195,6 +218,7 @@ class MainScene extends Phaser.Scene {
         this.load.image('log1', logUrl);
         this.load.image('log_frozen', logFrozenUrl);
         this.load.image('beaver', beaverUrl);
+        this.load.image('background', backgroundUrl);
         preloadTowerBallTextures(this);
         this.load.audio('splash1', new URL('./assets/sound_effects/splashing_sounds/1.mp3', import.meta.url).toString());
         this.load.audio('splash2', new URL('./assets/sound_effects/splashing_sounds/2.mp3', import.meta.url).toString());
@@ -225,6 +249,11 @@ class MainScene extends Phaser.Scene {
         // 3. Generate Level based on Math
         this.activeTowerDefs = this.getLevelTowerDefinitions();
         this.generateParabolaLevel();
+
+        // 4. Create and position parallax background based on level bounds
+        this.createParallaxBackground();
+
+        // 5. Create boundary walls aligned to background edges
         this.createBoundaryWalls();
 
         // 4. UI & Controls
@@ -324,30 +353,24 @@ class MainScene extends Phaser.Scene {
     }
 
     private createBoundaryWalls() {
-        // Calculate level bounds based on catapult and platforms
-        let minX = this.catapultAnchor.x;
-        let maxX = this.catapultAnchor.x;
-        let minY = this.catapultAnchor.y;
-
-        for (const platform of this.platforms) {
-            const bounds = platform.getBounds();
-            minX = Math.min(minX, bounds.x);
-            maxX = Math.max(maxX, bounds.right);
-            minY = Math.min(minY, bounds.y);
+        // Get the background bounds to align walls
+        const bgBounds = this.getBackgroundBounds();
+        if (!bgBounds) {
+            console.warn('No background bounds available for boundary walls');
+            return;
         }
 
-        // Level span from catapult to rightmost platform
-        const levelWidth = maxX - minX;
-        const levelHeight = FLOOR_Y - minY;
+        // Add 50% padding around the background for the physics walls
+        const wallPadding = 0.5;
+        const paddingX = bgBounds.width * wallPadding / 2;
+        const paddingY = bgBounds.height * wallPadding / 2;
 
-        // Create boundaries at 2x the level size
-        const margin = Math.max(levelWidth, levelHeight);
         const wallThickness = 100;
 
-        const leftX = minX - margin;
-        const rightX = maxX + margin;
-        const topY = minY - margin * 2; // Extra space above for high arcs
-        const bottomY = FLOOR_Y + 500; // Below floor
+        const leftX = bgBounds.left - paddingX;
+        const rightX = bgBounds.right + paddingX;
+        const topY = bgBounds.top - paddingY;
+        const bottomY = bgBounds.bottom + paddingY + 500; // Extra below to catch falling objects
 
         // Left wall
         const leftWall = this.add.rectangle(leftX - wallThickness / 2, (topY + bottomY) / 2, wallThickness, bottomY - topY, 0x000000, 0);
@@ -369,6 +392,127 @@ class MainScene extends Phaser.Scene {
             rigidBodyType: RAPIER.RigidBodyType.Fixed,
             collider: RAPIER.ColliderDesc.cuboid((rightX - leftX + wallThickness * 2) / 2, wallThickness / 2)
         });
+    }
+
+    private createParallaxBackground() {
+        // Calculate level bounds from catapult to final platform
+        this.calculateLevelBounds();
+
+        // Create background image centered on the level
+        this.backgroundImage = this.add
+            .image(this.parallaxCenter.x, this.parallaxCenter.y, 'background')
+            .setOrigin(0.5, 0.5)
+            .setDepth(-100)
+            .setAlpha(1);
+
+        // Enable linear filtering for smooth scaling (prevents pixelation)
+        this.backgroundImage.texture.setFilter(Phaser.Textures.FilterMode.LINEAR);
+
+        // Scale to cover the padded level area
+        this.positionParallaxBackground();
+    }
+
+    private calculateLevelBounds() {
+        const catapultX = this.catapultAnchor.x;
+        const catapultY = this.catapultAnchor.y;
+
+        let minX = catapultX;
+        let maxX = catapultX;
+        let minY = catapultY;
+        let maxY = FLOOR_Y;
+
+        // Use platforms to find level bounds
+        for (const platform of this.platforms) {
+            const bounds = platform.getBounds();
+            minX = Math.min(minX, bounds.left);
+            maxX = Math.max(maxX, bounds.right);
+            minY = Math.min(minY, bounds.top);
+            maxY = Math.max(maxY, bounds.bottom);
+        }
+
+        // Account for tower heights above platforms
+        for (const target of this.towerTargets) {
+            minY = Math.min(minY, target.platformSurfaceY - 300);
+        }
+
+        this.levelBounds = { minX, maxX, minY, maxY };
+        this.parallaxCenter = {
+            x: (minX + maxX) / 2,
+            y: (minY + maxY) / 2
+        };
+    }
+
+    private positionParallaxBackground() {
+        if (!this.backgroundImage) return;
+
+        // Calculate required coverage area with padding
+        const levelWidth = this.levelBounds.maxX - this.levelBounds.minX;
+        const levelHeight = this.levelBounds.maxY - this.levelBounds.minY;
+        const paddedWidth = levelWidth * (1 + PARALLAX_PADDING_FRACTION);
+        const paddedHeight = levelHeight * (1 + PARALLAX_PADDING_FRACTION);
+
+        // Get source image dimensions from texture (not display size)
+        const frame = this.backgroundImage.texture.getSourceImage();
+        const sourceW = frame.width;
+        const sourceH = frame.height;
+
+        // Calculate scale to cover the padded area (maintaining aspect ratio)
+        const scaleX = paddedWidth / sourceW;
+        const scaleY = paddedHeight / sourceH;
+        this.backgroundScale = Math.max(scaleX, scaleY);
+
+        this.backgroundImage.setScale(this.backgroundScale);
+        this.backgroundImage.setPosition(this.parallaxCenter.x, this.parallaxCenter.y);
+    }
+
+    private updateParallaxBackground(cameraX: number, cameraY: number) {
+        if (!this.backgroundImage) return;
+
+        // Calculate offset from the level center
+        const offsetX = cameraX - this.parallaxCenter.x;
+        const offsetY = cameraY - this.parallaxCenter.y;
+
+        // Apply reduced movement (parallax effect)
+        // The background moves in the same direction as the camera but at a reduced rate
+        const parallaxX = this.parallaxCenter.x + offsetX * PARALLAX_FACTOR;
+        const parallaxY = this.parallaxCenter.y + offsetY * PARALLAX_FACTOR;
+
+        this.backgroundImage.setPosition(parallaxX, parallaxY);
+    }
+
+    private getBackgroundBounds() {
+        if (!this.backgroundImage) return null;
+        // Use texture source dimensions, not the scaled display dimensions
+        const frame = this.backgroundImage.texture.getSourceImage();
+        const sourceW = frame.width;
+        const sourceH = frame.height;
+        if (!isFinite(sourceW) || !isFinite(sourceH) || sourceW <= 0 || sourceH <= 0) return null;
+
+        const width = sourceW * this.backgroundScale;
+        const height = sourceH * this.backgroundScale;
+        const centerX = this.parallaxCenter.x;
+        const centerY = this.parallaxCenter.y;
+
+        return {
+            width,
+            height,
+            left: centerX - width / 2,
+            right: centerX + width / 2,
+            top: centerY - height / 2,
+            bottom: centerY + height / 2
+        };
+    }
+
+    private getMinZoomForBackground() {
+        const bounds = this.getBackgroundBounds();
+        if (!bounds) return 0.15; // fallback minimum zoom
+
+        const camera = this.cameras.main;
+        const viewWidth = camera.width / this.dpr;
+        const viewHeight = camera.height / this.dpr;
+
+        // Calculate minimum zoom so the view doesn't exceed the background bounds
+        return Math.max(viewWidth / bounds.width, viewHeight / bounds.height);
     }
 
     private createPlayerBall() {
@@ -1229,7 +1373,7 @@ class MainScene extends Phaser.Scene {
                     if (hitFloor) {
                         ball.hasHitFloor = true;
                         ball.hasBeenHit = true;
-                        setBallMood(ball, 'angry');
+                        setBallMood(ball, 'grumpy');
                         continue;
                     }
                 }
@@ -1554,7 +1698,9 @@ class MainScene extends Phaser.Scene {
     }
 
     private updateCamera(delta: number) {
-        const target = this.getCameraTarget(250, 0.15, 1.0);
+        // Get minimum zoom based on background bounds
+        const minZoom = this.getMinZoomForBackground();
+        const target = this.getCameraTarget(250, minZoom, 1.0);
         if (!target) return;
 
         const camera = this.cameras.main;
@@ -1564,8 +1710,37 @@ class MainScene extends Phaser.Scene {
         let newX = Phaser.Math.Linear(camera.midPoint.x, target.x, smoothing);
         let newY = Phaser.Math.Linear(camera.midPoint.y, target.y, smoothing);
 
+        // Clamp camera position to stay within background bounds
+        const clamped = this.clampCameraToBackground(newX, newY, newZoom);
+        if (clamped) {
+            newX = clamped.x;
+            newY = clamped.y;
+        }
+
         camera.setZoom(newZoom);
         camera.centerOn(newX, newY);
+
+        // Update parallax background position
+        this.updateParallaxBackground(newX, newY);
+    }
+
+    private clampCameraToBackground(x: number, y: number, zoom: number) {
+        const bounds = this.getBackgroundBounds();
+        if (!bounds) return null;
+
+        const camera = this.cameras.main;
+        const halfViewW = camera.width / (2 * zoom);
+        const halfViewH = camera.height / (2 * zoom);
+
+        const minX = bounds.left + halfViewW;
+        const maxX = bounds.right - halfViewW;
+        const minY = bounds.top + halfViewH;
+        const maxY = bounds.bottom - halfViewH;
+
+        return {
+            x: minX > maxX ? (bounds.left + bounds.right) / 2 : Phaser.Math.Clamp(x, minX, maxX),
+            y: minY > maxY ? (bounds.top + bounds.bottom) / 2 : Phaser.Math.Clamp(y, minY, maxY)
+        };
     }
 
     private getCameraTarget(padding = 250, minZoom = 0.15, maxZoom = 1.0) {
@@ -1655,6 +1830,12 @@ const config: Phaser.Types.Core.GameConfig = {
     height: window.innerHeight,
     parent: 'app',
     backgroundColor: '#87CEEB',
+    render: {
+        antialias: true,
+        pixelArt: false,
+        roundPixels: false,
+        mipmapFilter: 'LINEAR'
+    },
     physics: { default: 'arcade', arcade: { debug: false } }, // Dummy for types, we use Rapier
     scene: [SettingsScene, MainScene]
 };

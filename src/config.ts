@@ -48,6 +48,12 @@ export const BALL_RESET_DELAY_MS = 100;
 // Extra height above the floor for tower balls to count as "hit the floor".
 export const TOWER_BALL_FLOOR_MARGIN = 40;
 
+// --- Parallax Background ---
+// How much the background moves relative to the camera (0 = fixed, 1 = moves with camera)
+export const PARALLAX_FACTOR = 0.15;
+// Extra padding around the level bounds for the background (0.3 = 30% larger)
+export const PARALLAX_PADDING_FRACTION = 0.3;
+
 // --- Debug ---
 export const DEBUG_RAPIER = true; // physics wireframes
 export const DEBUG_BOUNDS = true; // Phaser object AABBs
