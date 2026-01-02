@@ -1578,46 +1578,56 @@ class MainScene extends Phaser.Scene {
                 });
             }
             this.simStoppedAtMs = null;
-            return;
-        }
+        } else {
+            if (this.simStoppedAtMs === null) {
+                const slowBodies = [...bodyStats]
+                    .sort((a, b) => Math.max(b.lin, b.ang) - Math.max(a.lin, a.ang))
+                    .slice(0, 6)
+                    .map((stat) => ({
+                        id: stat.id,
+                        lin: stat.lin.toFixed(2),
+                        ang: stat.ang.toFixed(2),
+                        sleeping: stat.sleeping,
+                        x: stat.x.toFixed(1),
+                        y: stat.y.toFixed(1)
+                    }));
+                const sinceLaunchMs =
+                    this.launchTimeMs === null ? null : Math.round(timeMs - this.launchTimeMs);
+                console.log('[sim] considered stopped', {
+                    maxLin: maxLin.toFixed(2),
+                    maxAng: maxAng.toFixed(2),
+                    sleeping: sleepingCount,
+                    bodies: bodies.length,
+                    thresholds: { lin: BALL_STOP_SPEED, ang: SIM_STOP_ANGULAR_SPEED },
+                    sinceLaunchMs,
+                    reason: sleepingCount === bodies.length ? 'allSleeping' : 'belowThresholds',
+                    slowBodies
+                });
+                this.simStoppedAtMs = timeMs;
+            }
 
-        if (this.simStoppedAtMs === null) {
-            const slowBodies = [...bodyStats]
-                .sort((a, b) => Math.max(b.lin, b.ang) - Math.max(a.lin, a.ang))
-                .slice(0, 6)
-                .map((stat) => ({
-                    id: stat.id,
-                    lin: stat.lin.toFixed(2),
-                    ang: stat.ang.toFixed(2),
-                    sleeping: stat.sleeping,
-                    x: stat.x.toFixed(1),
-                    y: stat.y.toFixed(1)
-                }));
-            console.log('[sim] considered stopped', {
-                maxLin: maxLin.toFixed(2),
-                maxAng: maxAng.toFixed(2),
-                sleeping: sleepingCount,
-                bodies: bodies.length,
-                thresholds: { lin: BALL_STOP_SPEED, ang: SIM_STOP_ANGULAR_SPEED },
-                slowBodies
-            });
-            this.simStoppedAtMs = timeMs;
-            return;
-        }
-
-        if (timeMs - this.simStoppedAtMs >= BALL_RESET_DELAY_MS) {
-            console.log('[sim] auto-reset after idle', {
-                idleMs: Math.round(timeMs - this.simStoppedAtMs),
-                resetDelayMs: BALL_RESET_DELAY_MS
-            });
-            this.resetBallToCatapult();
-            return;
+            if (this.simStoppedAtMs !== null && timeMs - this.simStoppedAtMs >= BALL_RESET_DELAY_MS) {
+                const sinceLaunchMs =
+                    this.launchTimeMs === null ? null : Math.round(timeMs - this.launchTimeMs);
+                console.log('[sim] auto-reset after idle', {
+                    idleMs: Math.round(timeMs - this.simStoppedAtMs),
+                    resetDelayMs: BALL_RESET_DELAY_MS,
+                    sinceLaunchMs
+                });
+                this.resetBallToCatapult();
+                return;
+            }
         }
 
         // Fallback: reset after 7 seconds regardless of simulation state
         if (this.launchTimeMs !== null && timeMs - this.launchTimeMs >= 7000) {
             console.log('[sim] fallback reset after 7s timeout', {
-                elapsedMs: Math.round(timeMs - this.launchTimeMs)
+                elapsedMs: Math.round(timeMs - this.launchTimeMs),
+                maxLin: maxLin.toFixed(2),
+                maxAng: maxAng.toFixed(2),
+                sleeping: sleepingCount,
+                bodies: bodies.length,
+                simStoppedAtMs: this.simStoppedAtMs === null ? null : Math.round(this.simStoppedAtMs)
             });
             this.resetBallToCatapult();
         }
