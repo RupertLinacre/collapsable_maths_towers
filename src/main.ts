@@ -12,8 +12,8 @@ import {
     AIM_POWER_MIN,
     BALL_RESET_DELAY_MS,
     CATAPULT_HEIGHT_ABOVE_FLOOR,
+    BEAVER_RADIUS,
     BEAVER_DENSITY_LEVELS,
-    BEAVER_RADIUS_LEVELS,
     DEBUG_BOUNDS,
     DEBUG_RAPIER,
     PARALLAX_FACTOR,
@@ -66,10 +66,10 @@ const BALL_HIT_MIN_RELATIVE_SPEED = 40;
 const TOWER_BALL_AIR_DAMPING = 0.5;
 const TOWER_BALL_AIR_ANGULAR_DAMPING = 0.5;
 const HUD_PANEL_GAP = 12;
-const UPGRADE_PANEL_OFFSET_X = -210;
-const UPGRADE_PANEL_OFFSET_Y = -260;
+const HUD_MARGIN_X = 20;
+const HUD_MARGIN_Y = 20;
 const UPGRADE_LINE_GAP = 10;
-const CATAPULT_PANEL_OFFSET_X = UPGRADE_PANEL_OFFSET_X;
+const CATAPULT_PANEL_OFFSET_X = -210;
 const CATAPULT_PANEL_OFFSET_Y = 80;
 const ANSWER_PANEL_GAP = 16;
 const ANSWER_BOX_WIDTH = 360;
@@ -90,7 +90,7 @@ type TowerTarget = {
 };
 
 type TowerState = 'frozen' | 'unfrozen' | 'dynamic';
-type UpgradeCategory = 'size' | 'density';
+type UpgradeCategory = 'density';
 
 class MainScene extends Phaser.Scene {
     private rapier!: RapierPhysics;
@@ -129,15 +129,14 @@ class MainScene extends Phaser.Scene {
     private scoredBodies = new Set<number>();
     private answerInputValue = '';
     private catapultProblem?: MathProblem;
-    private upgradeState: BeaverUpgradeState = { sizeLevel: 0, densityLevel: 0 };
+    private upgradeState: BeaverUpgradeState = { densityLevel: 0 };
     private upgradeProblems: Record<UpgradeCategory, MathProblem | null> = {
-        size: null,
         density: null
     };
     private simStoppedAtMs: number | null = null;
     private launchTimeMs: number | null = null;
     private dpr = 1;
-    private currentBeaverRadius = BEAVER_RADIUS_LEVELS[0];
+    private currentBeaverRadius = BEAVER_RADIUS;
     private currentBeaverDensity = BEAVER_DENSITY_LEVELS[0];
     private levelIndex = 0;
     private levelConfig!: LevelConfig;
@@ -147,11 +146,10 @@ class MainScene extends Phaser.Scene {
     private towerBallDown = 0;
 
     // UI
+    private uiCamera!: Phaser.Cameras.Scene2D.Camera;
     private aimGraphics!: Phaser.GameObjects.Graphics;
-    private statsText!: Phaser.GameObjects.Text;
     private scoreText!: Phaser.GameObjects.Text;
     private feedbackText!: Phaser.GameObjects.Text;
-    private levelText!: Phaser.GameObjects.Text;
     private catapultQuestionText!: Phaser.GameObjects.Text;
     private upgradeTitleText!: Phaser.GameObjects.Text;
     private upgradeQuestionTexts!: Record<UpgradeCategory, Phaser.GameObjects.Text>;
@@ -162,12 +160,16 @@ class MainScene extends Phaser.Scene {
     private cheatButton!: Phaser.GameObjects.Text;
     private debugGraphics?: Phaser.GameObjects.Graphics;
     private physicsDebugGraphics?: Phaser.GameObjects.Graphics;
+    private uiObjects: Phaser.GameObjects.GameObject[] = [];
     private splashSoundKeys = ['splash1', 'splash2', 'splash3', 'splash4'];
     private crashSoundKeys = ['crash1', 'crash2', 'crash3', 'crash4'];
     private lastCrashSoundAtMs = 0;
     private lastOwSoundAtMs = 0;
     private handleResize = () => {
         this.dpr = applyHiDpi(this.scale).dpr;
+        if (this.uiCamera) {
+            this.uiCamera.setViewport(0, 0, this.scale.width, this.scale.height);
+        }
         this.updateHudLayout();
     };
 
@@ -187,7 +189,7 @@ class MainScene extends Phaser.Scene {
         this.scoredBodies.clear();
         this.answerInputValue = '';
         this.catapultProblem = undefined;
-        this.upgradeProblems = { size: null, density: null };
+        this.upgradeProblems = { density: null };
         this.simStoppedAtMs = null;
         this.launchTimeMs = null;
         this.levelComplete = false;
@@ -256,38 +258,27 @@ class MainScene extends Phaser.Scene {
         // 5. Create boundary walls aligned to background edges
         this.createBoundaryWalls();
 
-        // 4. UI & Controls
+        // 6. UI Camera (fixed to screen, renders above world)
+        this.createUiCamera();
+
+        // 7. UI & Controls
         this.cursors = this.input.keyboard!.createCursorKeys();
         this.resetKey = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.R);
         this.aimGraphics = this.add.graphics().setDepth(100);
 
-        this.statsText = this.add.text(20, 20, '', {
-            fontSize: '35px',
-            color: PANEL_TEXT_COLOR,
-            backgroundColor: PANEL_BG_COLOR,
-            padding: PANEL_PADDING
-        }).setDepth(1000);
-
-        this.scoreText = this.add.text(20, 110, '', {
+        this.scoreText = this.registerUiObject(this.add.text(20, 20, '', {
             fontSize: '32px',
             color: PANEL_TEXT_COLOR,
             backgroundColor: PANEL_BG_COLOR,
             padding: PANEL_PADDING
-        }).setDepth(1000);
+        }).setDepth(1000).setScrollFactor(0));
 
-        this.feedbackText = this.add.text(20, 180, '', {
+        this.feedbackText = this.registerUiObject(this.add.text(20, 110, '', {
             fontSize: '29px',
             color: PANEL_TEXT_COLOR,
             backgroundColor: PANEL_BG_COLOR,
             padding: PANEL_PADDING
-        }).setDepth(1000);
-
-        this.levelText = this.add.text(20, 250, '', {
-            fontSize: '32px',
-            color: PANEL_TEXT_COLOR,
-            backgroundColor: PANEL_BG_COLOR,
-            padding: PANEL_PADDING
-        }).setDepth(1000);
+        }).setDepth(1000).setScrollFactor(0).setVisible(false));
 
         this.winText = this.add.text(0, 0, 'Level complete!\nPress Enter to proceed', {
             fontSize: '48px',
@@ -296,6 +287,7 @@ class MainScene extends Phaser.Scene {
             padding: { x: 18, y: 14 },
             align: 'center'
         });
+        this.registerUiObject(this.winText);
         this.winText.setOrigin(0.5, 0.5).setScrollFactor(0).setDepth(3000).setVisible(false);
 
         this.catapultQuestionText = this.add
@@ -319,7 +311,7 @@ class MainScene extends Phaser.Scene {
         this.createUpgradeUi();
         this.createUpgradeProblems();
         this.createCheatButton();
-        this.feedbackText.setText('Answer a tower to unfreeze it. Answer the catapult to launch!');
+        this.setFeedbackText('');
         this.input.keyboard?.on('keydown', this.handleAnswerKey, this);
         this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
             this.input.keyboard?.off('keydown', this.handleAnswerKey, this);
@@ -334,7 +326,7 @@ class MainScene extends Phaser.Scene {
 
         this.updateTowerBallCounts();
         this.updateUI();
-        this.updateWinLayout();
+        this.updateHudLayout();
     }
 
     private createInfiniteFloor() {
@@ -410,6 +402,19 @@ class MainScene extends Phaser.Scene {
 
         // Scale to cover the padded level area
         this.positionParallaxBackground();
+    }
+
+    private createUiCamera() {
+        this.uiCamera = this.cameras.add(0, 0, this.scale.width, this.scale.height);
+        this.uiCamera.setScroll(0, 0);
+        this.uiCamera.setZoom(1);
+        this.uiCamera.ignore(this.children.list);
+    }
+
+    private registerUiObject<T extends Phaser.GameObjects.GameObject>(obj: T): T {
+        this.uiObjects.push(obj);
+        this.cameras.main.ignore(obj);
+        return obj;
     }
 
     private calculateLevelBounds() {
@@ -549,10 +554,9 @@ class MainScene extends Phaser.Scene {
     }
 
     private refreshBeaverStats() {
-        const sizeIndex = Phaser.Math.Clamp(this.upgradeState.sizeLevel, 0, BEAVER_RADIUS_LEVELS.length - 1);
         const densityIndex = Phaser.Math.Clamp(this.upgradeState.densityLevel, 0, BEAVER_DENSITY_LEVELS.length - 1);
 
-        this.currentBeaverRadius = BEAVER_RADIUS_LEVELS[sizeIndex];
+        this.currentBeaverRadius = BEAVER_RADIUS;
         this.currentBeaverDensity = BEAVER_DENSITY_LEVELS[densityIndex];
         // maxAimPower is set from levelConfig in init(), not from upgrades
     }
@@ -698,22 +702,23 @@ class MainScene extends Phaser.Scene {
     }
 
     private createUpgradeUi() {
-        const baseX = this.catapultAnchor.x + UPGRADE_PANEL_OFFSET_X;
-        const baseY = this.catapultAnchor.y + UPGRADE_PANEL_OFFSET_Y;
+        const baseX = HUD_MARGIN_X;
+        const baseY = HUD_MARGIN_Y;
 
-        this.upgradeTitleText = this.add
+        this.upgradeTitleText = this.registerUiObject(this.add
             .text(baseX, baseY, 'Beaver upgrades', {
                 fontSize: '35px',
                 color: PANEL_TEXT_COLOR,
                 backgroundColor: PANEL_BG_COLOR,
                 padding: PANEL_PADDING
             })
-            .setOrigin(0, 1)
-            .setDepth(900);
+            .setOrigin(0, 0)
+            .setDepth(900)
+            .setScrollFactor(0));
         this.upgradeTitleText.setVisible(true);
 
         this.upgradeQuestionTexts = {
-            size: this.add
+            density: this.registerUiObject(this.add
                 .text(baseX, baseY + 10, '', {
                     fontSize: '29px',
                     color: PANEL_TEXT_COLOR,
@@ -721,16 +726,8 @@ class MainScene extends Phaser.Scene {
                     padding: PANEL_PADDING
                 })
                 .setOrigin(0, 0)
-                .setDepth(900),
-            density: this.add
-                .text(baseX, baseY + 55, '', {
-                    fontSize: '29px',
-                    color: PANEL_TEXT_COLOR,
-                    backgroundColor: PANEL_BG_COLOR,
-                    padding: PANEL_PADDING
-                })
-                .setOrigin(0, 0)
                 .setDepth(900)
+                .setScrollFactor(0))
         };
 
         this.updateUpgradeUi();
@@ -738,7 +735,7 @@ class MainScene extends Phaser.Scene {
 
     private createUpgradeProblems() {
         const usedAnswers = new Set<number>();
-        const categories: UpgradeCategory[] = ['size', 'density'];
+        const categories: UpgradeCategory[] = ['density'];
 
         for (const category of categories) {
             if (!this.canUpgrade(category)) {
@@ -755,7 +752,7 @@ class MainScene extends Phaser.Scene {
 
     private createCheatButton() {
         // Create a small cheat button in the top right corner (scrollFactor 0 to stay fixed on screen)
-        this.cheatButton = this.add
+        this.cheatButton = this.registerUiObject(this.add
             .text(10, 10, '🔓 Unfreeze All', {
                 fontSize: '21px',
                 color: '#ffffff',
@@ -764,7 +761,7 @@ class MainScene extends Phaser.Scene {
             })
             .setScrollFactor(0)
             .setDepth(3000)
-            .setInteractive({ useHandCursor: true });
+            .setInteractive({ useHandCursor: true }));
 
         this.cheatButton.on('pointerdown', () => {
             this.unfreezeAllTowers();
@@ -791,9 +788,9 @@ class MainScene extends Phaser.Scene {
             }
         }
         if (unfrozenCount > 0) {
-            this.feedbackText.setText(`Cheat: ${unfrozenCount} tower${unfrozenCount === 1 ? '' : 's'} unfrozen!`);
+            this.setFeedbackText(`Cheat: ${unfrozenCount} tower${unfrozenCount === 1 ? '' : 's'} unfrozen!`);
         } else {
-            this.feedbackText.setText('No frozen towers to unfreeze.');
+            this.setFeedbackText('No frozen towers to unfreeze.');
         }
     }
 
@@ -852,39 +849,38 @@ class MainScene extends Phaser.Scene {
 
     private updateUpgradeLayout() {
         if (!this.upgradeTitleText || !this.upgradeQuestionTexts) return;
-        const uiScale = this.getUiScale();
-        const baseX = this.catapultAnchor.x + UPGRADE_PANEL_OFFSET_X * uiScale;
-        const baseY = this.catapultAnchor.y + UPGRADE_PANEL_OFFSET_Y * uiScale;
-        this.upgradeTitleText.setOrigin(0, 1).setPosition(baseX, baseY);
+        const uiScale = 1;
+        const baseX = HUD_MARGIN_X;
+        const baseY = HUD_MARGIN_Y;
+        this.upgradeTitleText.setOrigin(0, 0).setPosition(baseX, baseY);
 
-        let y = baseY + 10 * uiScale;
-        const categories: UpgradeCategory[] = ['size', 'density'];
-        for (const category of categories) {
-            const text = this.upgradeQuestionTexts[category];
-            text.setOrigin(0, 0).setPosition(baseX, y);
-            y += text.displayHeight + UPGRADE_LINE_GAP * uiScale;
-        }
+        const y = baseY + this.upgradeTitleText.displayHeight + UPGRADE_LINE_GAP * uiScale;
+        const text = this.upgradeQuestionTexts.density;
+        text.setOrigin(0, 0).setPosition(baseX, y);
     }
 
     private updateHudLayout() {
-        if (!this.statsText || !this.scoreText || !this.feedbackText || !this.levelText) return;
-        const uiScale = this.getUiScale();
-        const upgradeBaseX = this.catapultAnchor.x + UPGRADE_PANEL_OFFSET_X * uiScale;
-        const upgradeBaseY = this.catapultAnchor.y + UPGRADE_PANEL_OFFSET_Y * uiScale;
-        const upgradeTop = this.upgradeTitleText ? upgradeBaseY - this.upgradeTitleText.displayHeight : upgradeBaseY;
+        if (!this.scoreText || !this.feedbackText) return;
+        const uiScale = 1;
         const hudGap = HUD_PANEL_GAP * uiScale;
 
-        const blocks = [this.levelText, this.statsText, this.scoreText, this.feedbackText];
-        const totalHeight =
-            blocks.reduce((sum, text) => sum + text.displayHeight, 0) + hudGap * Math.max(0, blocks.length - 1);
+        this.updateUpgradeLayout();
 
-        let y = upgradeTop - totalHeight - hudGap;
-        for (const text of blocks) {
-            text.setOrigin(0, 0).setPosition(upgradeBaseX, y);
-            y += text.displayHeight + hudGap;
+        let upgradeBottom = HUD_MARGIN_Y;
+        const upgradeVisible =
+            (this.upgradeTitleText?.visible ?? false) || (this.upgradeQuestionTexts?.density.visible ?? false);
+        if (this.upgradeTitleText?.visible) {
+            upgradeBottom = this.upgradeTitleText.y + this.upgradeTitleText.displayHeight;
+        }
+        if (this.upgradeQuestionTexts?.density.visible) {
+            upgradeBottom = this.upgradeQuestionTexts.density.y + this.upgradeQuestionTexts.density.displayHeight;
         }
 
-        this.updateUpgradeLayout();
+        let y = upgradeBottom + (upgradeVisible ? hudGap : 0);
+        this.scoreText.setOrigin(0, 0).setPosition(HUD_MARGIN_X, y);
+        y += this.scoreText.displayHeight + hudGap;
+        this.feedbackText.setOrigin(0, 0).setPosition(HUD_MARGIN_X, y);
+
         this.updateAnswerLayout();
         this.updateWinLayout();
     }
@@ -903,6 +899,11 @@ class MainScene extends Phaser.Scene {
         this.answerBox.setStrokeStyle(3, hasInput ? PANEL_BORDER_HEX : 0x555555, 1);
     }
 
+    private setFeedbackText(message: string) {
+        this.feedbackText.setText(message);
+        this.feedbackText.setVisible(message.length > 0);
+    }
+
     private getUiScale() {
         const zoom = this.cameras.main.zoom || 1;
         return zoom > 0 ? 1 / zoom : 1;
@@ -915,21 +916,10 @@ class MainScene extends Phaser.Scene {
             obj.setScale(uiScale);
         };
 
-        applyScale(this.statsText);
-        applyScale(this.scoreText);
-        applyScale(this.feedbackText);
-        applyScale(this.levelText);
         applyScale(this.catapultQuestionText);
-        applyScale(this.upgradeTitleText);
         applyScale(this.answerBox);
         applyScale(this.answerText);
         applyScale(this.answerHintText);
-
-        if (this.upgradeQuestionTexts) {
-            for (const text of Object.values(this.upgradeQuestionTexts)) {
-                applyScale(text);
-            }
-        }
 
         for (const target of this.towerTargets) {
             if (!target.questionText) continue;
@@ -943,7 +933,7 @@ class MainScene extends Phaser.Scene {
 
     private updateUpgradeUi() {
         if (!this.upgradeQuestionTexts) return;
-        const categories: UpgradeCategory[] = ['size', 'density'];
+        const categories: UpgradeCategory[] = ['density'];
         for (const category of categories) {
             const label = this.getUpgradeLabel(category);
             const problem = this.upgradeProblems[category];
@@ -953,21 +943,19 @@ class MainScene extends Phaser.Scene {
     }
 
     private getUpgradeLabel(category: UpgradeCategory) {
-        const label = category === 'size' ? 'Size' : 'Density';
-        const level = category === 'size' ? this.upgradeState.sizeLevel + 1 : this.upgradeState.densityLevel + 1;
-        const max = category === 'size' ? BEAVER_RADIUS_LEVELS.length : BEAVER_DENSITY_LEVELS.length;
+        const label = category.charAt(0).toUpperCase() + category.slice(1);
+        const level = this.upgradeState.densityLevel + 1;
+        const max = BEAVER_DENSITY_LEVELS.length;
         return `${label} ${level}/${max}`;
     }
 
     private canUpgrade(category: UpgradeCategory) {
-        if (category === 'size') return this.upgradeState.sizeLevel < BEAVER_RADIUS_LEVELS.length - 1;
-        return this.upgradeState.densityLevel < BEAVER_DENSITY_LEVELS.length - 1;
+        return category === 'density' && this.upgradeState.densityLevel < BEAVER_DENSITY_LEVELS.length - 1;
     }
 
     private applyUpgrade(category: UpgradeCategory) {
         if (!this.canUpgrade(category)) return '';
 
-        if (category === 'size') this.upgradeState.sizeLevel += 1;
         if (category === 'density') this.upgradeState.densityLevel += 1;
 
         gameState.upgrades = { ...this.upgradeState };
@@ -979,7 +967,7 @@ class MainScene extends Phaser.Scene {
     }
 
     private tryUpgrade(answerValue: number | string) {
-        const categories: UpgradeCategory[] = ['size', 'density'];
+        const categories: UpgradeCategory[] = ['density'];
         for (const category of categories) {
             const problem = this.upgradeProblems[category];
             if (!problem) continue;
@@ -1006,7 +994,7 @@ class MainScene extends Phaser.Scene {
         }
 
         const usedAnswers = new Set<number>();
-        const categories: UpgradeCategory[] = ['size', 'density'];
+        const categories: UpgradeCategory[] = ['density'];
         for (const other of categories) {
             if (other === category) continue;
             const problem = this.upgradeProblems[other];
@@ -1111,9 +1099,9 @@ class MainScene extends Phaser.Scene {
         if (launched) feedbackParts.push('Launching...');
 
         if (feedbackParts.length) {
-            this.feedbackText.setText(feedbackParts.join(' '));
+            this.setFeedbackText(feedbackParts.join(' '));
         } else {
-            this.feedbackText.setText('Not quite. Try again!');
+            this.setFeedbackText('Not quite. Try again!');
         }
 
         this.answerInputValue = '';
@@ -1492,8 +1480,6 @@ class MainScene extends Phaser.Scene {
         this.aimAngle = Phaser.Math.Clamp(this.aimAngle, AIM_ANGLE_MIN_DEG, AIM_ANGLE_MAX_DEG);
         this.aimPower = Phaser.Math.Clamp(this.aimPower, AIM_POWER_MIN, this.maxAimPower);
 
-        if (this.aimAngle !== prevAngle || this.aimPower !== prevPower) this.updateUI();
-
     }
 
     private launch() {
@@ -1514,7 +1500,6 @@ class MainScene extends Phaser.Scene {
         // Ball mass is implicitly calculated by density, but we can force velocity directly for clarity
         this.ballBody.rigidBody.setLinvel({ x: vx, y: vy }, true);
 
-        this.statsText.setText('PRESS R TO RESET');
         this.aimGraphics.clear();
     }
 
@@ -1636,14 +1621,13 @@ class MainScene extends Phaser.Scene {
     private completeLevel() {
         this.levelComplete = true;
         const isLastLevel = this.levelIndex >= LEVELS.length - 1;
-        this.feedbackText.setText(
+        this.setFeedbackText(
             isLastLevel ? 'All levels cleared! Press Enter for settings.' : 'Level cleared! Press Enter for next level.'
         );
         this.winText.setVisible(true);
         this.catapultQuestionText.setText('');
         if (this.upgradeTitleText) this.upgradeTitleText.setVisible(false);
         if (this.upgradeQuestionTexts) {
-            this.upgradeQuestionTexts.size.setVisible(false);
             this.upgradeQuestionTexts.density.setVisible(false);
         }
         this.answerInputValue = '';
@@ -1680,19 +1664,13 @@ class MainScene extends Phaser.Scene {
         this.createCatapultProblem();
         this.answerInputValue = '';
         this.updateAnswerText();
-        this.feedbackText.setText('Answer the catapult to launch again!');
+        this.setFeedbackText('');
         this.updateUI();
     }
 
     private updateUI() {
-        if (this.hasLaunched) {
-            this.statsText.setText('PRESS R TO RESET');
-        } else {
-            this.statsText.setText(`ANGLE: ${Math.abs(this.aimAngle)}°\nPOWER: ${this.aimPower}/${Math.round(this.maxAimPower)}`);
-        }
         const progress = this.towerBallTotal > 0 ? `${this.towerBallDown}/${this.towerBallTotal}` : '0/0';
         this.scoreText.setText(`BALLS DOWN: ${progress}\nSCORE: ${this.score}`);
-        this.levelText.setText(`LEVEL ${this.levelIndex + 1}/${LEVELS.length}: ${this.levelConfig.name}`);
     }
 
     private drawAimArrow() {

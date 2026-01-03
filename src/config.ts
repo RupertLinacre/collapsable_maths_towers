@@ -29,7 +29,6 @@ export const PLANK_DENSITY = 4.0;
 // --- Beaver / Ball ---
 export const BEAVER_RADIUS = 45;
 export const BEAVER_DENSITY = 100.8;
-export const BEAVER_RADIUS_LEVELS = [BEAVER_RADIUS, 60, 75];
 // 10 density levels for upgrades (starts at BEAVER_DENSITY, increases to 8.0)
 export const BEAVER_DENSITY_LEVELS = [
     BEAVER_DENSITY,  // Level 1: 0.8
