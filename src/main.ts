@@ -68,6 +68,10 @@ const TOWER_BALL_AIR_ANGULAR_DAMPING = 0.5;
 const HUD_PANEL_GAP = 12;
 const HUD_MARGIN_X = 20;
 const HUD_MARGIN_Y = 20;
+const BALL_STATUS_ICON_SIZE = 90;
+const BALL_STATUS_ICON_GAP = 8;
+const BALL_STATUS_OUTLINE_COLOR = 0x2ecc40;
+const BALL_STATUS_OUTLINE_WIDTH = 3;
 const UPGRADE_LINE_GAP = 10;
 const CATAPULT_PANEL_OFFSET_X = -210;
 const CATAPULT_PANEL_OFFSET_Y = 80;
@@ -161,6 +165,11 @@ class MainScene extends Phaser.Scene {
     private debugGraphics?: Phaser.GameObjects.Graphics;
     private physicsDebugGraphics?: Phaser.GameObjects.Graphics;
     private uiObjects: Phaser.GameObjects.GameObject[] = [];
+    private ballStatusIcons: Array<{
+        ball: TowerBall;
+        icon: Phaser.GameObjects.Image;
+        outline: Phaser.GameObjects.Graphics;
+    }> = [];
     private splashSoundKeys = ['splash1', 'splash2', 'splash3', 'splash4'];
     private crashSoundKeys = ['crash1', 'crash2', 'crash3', 'crash4'];
     private lastCrashSoundAtMs = 0;
@@ -196,6 +205,11 @@ class MainScene extends Phaser.Scene {
         this.towerBallTotal = 0;
         this.towerBallDown = 0;
         this.activeTowerDefs = [];
+        this.ballStatusIcons.forEach(({ icon, outline }) => {
+            icon.destroy();
+            outline.destroy();
+        });
+        this.ballStatusIcons = [];
 
         this.towerTargets.length = 0;
         this.trackedObjects.length = 0;
@@ -422,6 +436,72 @@ class MainScene extends Phaser.Scene {
             this.uiCamera.ignore(obj);
         }
         return obj;
+    }
+
+    private getTowerBalls() {
+        const balls: TowerBall[] = [];
+        for (const target of this.towerTargets) {
+            const towerBalls = target.tower.ballBodies ?? [];
+            balls.push(...towerBalls);
+        }
+        return balls;
+    }
+
+    private syncBallStatusHud() {
+        const balls = this.getTowerBalls();
+        const sameList =
+            balls.length === this.ballStatusIcons.length &&
+            balls.every((ball, index) => this.ballStatusIcons[index]?.ball === ball);
+        if (!sameList) {
+            for (const entry of this.ballStatusIcons) {
+                entry.icon.destroy();
+                entry.outline.destroy();
+            }
+            this.ballStatusIcons = balls.map((ball) => {
+                const icon = this.registerUiObject(this.add.image(0, 0, ball.sprite.texture.key));
+                icon.setDisplaySize(BALL_STATUS_ICON_SIZE, BALL_STATUS_ICON_SIZE).setDepth(1200).setScrollFactor(0);
+                const outline = this.registerUiObject(this.add.graphics());
+                outline.setDepth(1199).setScrollFactor(0);
+                return { ball, icon, outline };
+            });
+        }
+        this.updateBallStatusLayout();
+        this.updateBallStatusIcons();
+    }
+
+    private updateBallStatusIcons() {
+        if (!this.ballStatusIcons.length) return;
+        for (const entry of this.ballStatusIcons) {
+            const textureKey = entry.ball.sprite.texture.key;
+            if (entry.icon.texture.key !== textureKey) {
+                entry.icon.setTexture(textureKey);
+            }
+            entry.icon.setAlpha(1);
+            entry.outline.setVisible(entry.ball.isDown);
+        }
+    }
+
+    private updateBallStatusLayout() {
+        if (!this.ballStatusIcons.length) return;
+        const viewWidth = this.scale.width;
+        const rightEdge = viewWidth - HUD_MARGIN_X;
+        const maxPerRow = Math.max(
+            1,
+            Math.floor((viewWidth - HUD_MARGIN_X * 2 + BALL_STATUS_ICON_GAP) / (BALL_STATUS_ICON_SIZE + BALL_STATUS_ICON_GAP))
+        );
+
+        for (let i = 0; i < this.ballStatusIcons.length; i += 1) {
+            const col = i % maxPerRow;
+            const row = Math.floor(i / maxPerRow);
+            const x = rightEdge - BALL_STATUS_ICON_SIZE / 2 - col * (BALL_STATUS_ICON_SIZE + BALL_STATUS_ICON_GAP);
+            const y = HUD_MARGIN_Y + BALL_STATUS_ICON_SIZE / 2 + row * (BALL_STATUS_ICON_SIZE + BALL_STATUS_ICON_GAP);
+            const entry = this.ballStatusIcons[i];
+            entry.icon.setPosition(x, y);
+            entry.outline.clear();
+            entry.outline.lineStyle(BALL_STATUS_OUTLINE_WIDTH, BALL_STATUS_OUTLINE_COLOR, 1);
+            entry.outline.strokeCircle(0, 0, BALL_STATUS_ICON_SIZE / 2 + BALL_STATUS_OUTLINE_WIDTH);
+            entry.outline.setPosition(x, y);
+        }
     }
 
     private calculateLevelBounds() {
@@ -699,6 +779,7 @@ class MainScene extends Phaser.Scene {
         this.towerBallTotal = total;
         this.towerBallDown = 0;
         this.updateUI();
+        this.syncBallStatusHud();
     }
 
     private createCatapultProblem() {
@@ -872,6 +953,7 @@ class MainScene extends Phaser.Scene {
         const hudGap = HUD_PANEL_GAP * uiScale;
 
         this.updateUpgradeLayout();
+        this.updateBallStatusLayout();
 
         let upgradeBottom = HUD_MARGIN_Y;
         const upgradeVisible =
@@ -1130,6 +1212,7 @@ class MainScene extends Phaser.Scene {
         this.updateTowerBallEmotions();
         this.checkTowerGroundHits();
         this.checkLevelCompletion();
+        this.updateBallStatusIcons();
         this.checkSimulationAutoReset(time);
         this.drawDebugBounds();
         this.drawPhysicsDebug();
