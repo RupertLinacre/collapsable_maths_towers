@@ -264,7 +264,7 @@ class MainScene extends Phaser.Scene {
         // 7. UI & Controls
         this.cursors = this.input.keyboard!.createCursorKeys();
         this.resetKey = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.R);
-        this.aimGraphics = this.add.graphics().setDepth(100);
+        this.aimGraphics = this.registerWorldObject(this.add.graphics().setDepth(100));
 
         this.scoreText = this.registerUiObject(this.add.text(20, 20, '', {
             fontSize: '32px',
@@ -290,7 +290,7 @@ class MainScene extends Phaser.Scene {
         this.registerUiObject(this.winText);
         this.winText.setOrigin(0.5, 0.5).setScrollFactor(0).setDepth(3000).setVisible(false);
 
-        this.catapultQuestionText = this.add
+        this.catapultQuestionText = this.registerWorldObject(this.add
             .text(
                 this.catapultAnchor.x + CATAPULT_PANEL_OFFSET_X,
                 this.catapultAnchor.y + CATAPULT_PANEL_OFFSET_Y,
@@ -303,7 +303,7 @@ class MainScene extends Phaser.Scene {
                 }
             )
             .setOrigin(0, 0)
-            .setDepth(900);
+            .setDepth(900));
         this.catapultQuestionText.setWordWrapWidth(ANSWER_BOX_WIDTH);
 
         this.createAnswerInput();
@@ -318,10 +318,10 @@ class MainScene extends Phaser.Scene {
         });
 
         if (DEBUG_BOUNDS) {
-            this.debugGraphics = this.add.graphics().setDepth(2000);
+            this.debugGraphics = this.registerWorldObject(this.add.graphics().setDepth(2000));
         }
         if (DEBUG_RAPIER) {
-            this.physicsDebugGraphics = this.add.graphics().setDepth(2000);
+            this.physicsDebugGraphics = this.registerWorldObject(this.add.graphics().setDepth(2000));
         }
 
         this.updateTowerBallCounts();
@@ -414,6 +414,13 @@ class MainScene extends Phaser.Scene {
     private registerUiObject<T extends Phaser.GameObjects.GameObject>(obj: T): T {
         this.uiObjects.push(obj);
         this.cameras.main.ignore(obj);
+        return obj;
+    }
+
+    private registerWorldObject<T extends Phaser.GameObjects.GameObject>(obj: T): T {
+        if (this.uiCamera) {
+            this.uiCamera.ignore(obj);
+        }
         return obj;
     }
 
@@ -801,17 +808,17 @@ class MainScene extends Phaser.Scene {
         const panelCenterX = panelLeft + ANSWER_BOX_WIDTH / 2;
         const y = this.catapultAnchor.y + CATAPULT_PANEL_OFFSET_Y;
 
-        this.answerBox = this.add
+        this.answerBox = this.registerWorldObject(this.add
             .rectangle(panelCenterX, y, boxWidth, boxHeight, PANEL_BG_HEX, PANEL_BG_ALPHA)
             .setStrokeStyle(3, PANEL_BORDER_HEX, 1)
-            .setDepth(1000);
+            .setDepth(1000));
 
-        this.answerText = this.add
+        this.answerText = this.registerWorldObject(this.add
             .text(panelCenterX, y, '', { fontSize: '35px', color: PANEL_TEXT_COLOR })
             .setOrigin(0.5, 0.5)
-            .setDepth(1001);
+            .setDepth(1001));
 
-        this.answerHintText = this.add
+        this.answerHintText = this.registerWorldObject(this.add
             .text(panelLeft, y + boxHeight / 2 + 6, 'Type answer + Enter', {
                 fontSize: '27px',
                 color: PANEL_TEXT_COLOR,
@@ -819,7 +826,7 @@ class MainScene extends Phaser.Scene {
                 padding: PANEL_PADDING
             })
             .setOrigin(0, 0.5)
-            .setDepth(1001);
+            .setDepth(1001));
 
         this.updateAnswerLayout();
         this.updateAnswerText();
